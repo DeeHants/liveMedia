@@ -36,5 +36,6 @@ void* HashTable::RemoveNext() {
   void* removedValue = iter->next(key);
   if (removedValue != 0) Remove(key);
 
+  delete iter;
   return removedValue;
 }

@@ -67,9 +67,15 @@ public:
   }
 
   void setStreamSocket(int sockNum, unsigned char streamChannelId) {
-    // hack to allow sending RTP over TCP (RFC 2236, section 10.12)
     fRTPInterface.setStreamSocket(sockNum, streamChannelId);
   }
+  void addStreamSocket(int sockNum, unsigned char streamChannelId) {
+    fRTPInterface.addStreamSocket(sockNum, streamChannelId);    
+  }
+  void removeStreamSocket(int sockNum, unsigned char streamChannelId) {
+    fRTPInterface.removeStreamSocket(sockNum, streamChannelId);    
+  }
+    // hacks to allow sending RTP over TCP (RFC 2236, section 10.12)
 
   void getTotalBitrate(unsigned& outNumBytes, double& outElapsedTime);
       // returns the number of bytes sent since the last time that we

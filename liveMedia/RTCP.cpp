@@ -97,6 +97,7 @@ void RTCPMemberDatabase::reapOldMembers(unsigned threshold) {
         foundOldMember = True;
       }
     }
+    delete iter;
 
     if (foundOldMember) {
 #ifdef DEBUG
@@ -224,6 +225,17 @@ void RTCPInstance::setStreamSocket(int sockNum,
   fRTCPInterface.setStreamSocket(sockNum, streamChannelId);
 
   // Turn background reading back on:
+  TaskScheduler::BackgroundHandlerProc* handler
+    = (TaskScheduler::BackgroundHandlerProc*)&incomingReportHandler;
+  fRTCPInterface.startNetworkReading(handler);
+}
+
+void RTCPInstance::addStreamSocket(int sockNum,
+				   unsigned char streamChannelId) {
+  // Add the RTCP-over-TCP interface:
+  fRTCPInterface.setStreamSocket(sockNum, streamChannelId);
+
+  // Turn on background reading for this socket (in case it's not on already):
   TaskScheduler::BackgroundHandlerProc* handler
     = (TaskScheduler::BackgroundHandlerProc*)&incomingReportHandler;
   fRTCPInterface.startNetworkReading(handler);

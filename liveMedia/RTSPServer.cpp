@@ -32,7 +32,8 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 ////////// RTSPServer //////////
 
 RTSPServer*
-RTSPServer::createNew(UsageEnvironment& env, Port ourPort) {
+RTSPServer::createNew(UsageEnvironment& env, Port ourPort,
+		      UserAuthenticationDatabase* authDatabase) {
   int ourSocket = -1;
   RTSPServer* newServer = NULL;
 
@@ -40,7 +41,7 @@ RTSPServer::createNew(UsageEnvironment& env, Port ourPort) {
     int ourSocket = setUpOurSocket(env, ourPort);
     if (ourSocket == -1) break;
 
-    return new RTSPServer(env, ourSocket, ourPort);
+    return new RTSPServer(env, ourSocket, ourPort, authDatabase);
   } while (0);
 
   if (ourSocket != -1) ::_close(ourSocket);
@@ -79,7 +80,9 @@ void RTSPServer
 char* RTSPServer
 ::rtspURL(ServerMediaSession const* serverMediaSession) const {
   struct in_addr ourAddress;
-  ourAddress.s_addr = ourSourceAddressForMulticast(envir()); // hack
+  ourAddress.s_addr = ReceivingInterfaceAddr != 0
+    ? ReceivingInterfaceAddr
+    : ourSourceAddressForMulticast(envir()); // hack
 
   char const* sessionName = serverMediaSession->streamName();
   unsigned sessionNameLength = strlen(sessionName);
@@ -133,9 +136,11 @@ int RTSPServer::setUpOurSocket(UsageEnvironment& env, Port& ourPort) {
 }
 
 RTSPServer::RTSPServer(UsageEnvironment& env,
-		       int ourSocket, Port ourPort)
+		       int ourSocket, Port ourPort,
+		       UserAuthenticationDatabase* authDatabase)
   : Medium(env),
     fServerSocket(ourSocket), fServerPort(ourPort),
+    fAuthDB(authDatabase),
     fServerMediaSessions(HashTable::create(STRING_HASH_KEYS)), 
     fSessionIdCounter(0) {
 #ifdef USE_SIGNALS
@@ -230,7 +235,8 @@ RTSPServer::RTSPClientSession::~RTSPClientSession() {
 void RTSPServer::RTSPClientSession::reclaimStreamStates() {
   for (unsigned i = 0; i < fNumStreamStates; ++i) {
     if (fStreamStates[i].subsession != NULL) {
-      fStreamStates[i].subsession->deleteStream(fStreamStates[i].streamToken);
+      fStreamStates[i].subsession->deleteStream(fOurSessionId,
+						fStreamStates[i].streamToken);
     }
   }
   delete[] fStreamStates; fStreamStates = NULL;
@@ -311,7 +317,7 @@ void RTSPServer::RTSPClientSession::incomingRequestHandler1() {
     if (strcmp(cmdName, "OPTIONS") == 0) {
       handleCmd_OPTIONS(cseq);
     } else if (strcmp(cmdName, "DESCRIBE") == 0) {
-      handleCmd_DESCRIBE(cseq, urlSuffix);
+      handleCmd_DESCRIBE(cseq, urlSuffix, (char const*)fBuffer);
     } else if (strcmp(cmdName, "SETUP") == 0) {
       handleCmd_SETUP(cseq, urlPreSuffix, urlSuffix, (char const*)fBuffer);
     } else if (strcmp(cmdName, "TEARDOWN") == 0
@@ -365,10 +371,13 @@ void RTSPServer::RTSPClientSession::handleCmd_OPTIONS(char const* cseq) {
 }
 
 void RTSPServer::RTSPClientSession
-::handleCmd_DESCRIBE(char const* cseq, char const* urlSuffix) {
+::handleCmd_DESCRIBE(char const* cseq, char const* urlSuffix,
+		     char const* fullRequestStr) {
   char* sdpDescription = NULL;
   char* rtspURL = NULL;
   do {
+    if (!authenticationOK("DESCRIBE", cseq, fullRequestStr)) break;
+
     // We should really check that the request contains an "Accept:" #####
     // for "application/sdp", because that's what we're sending back #####
 
@@ -428,7 +437,7 @@ static void parseTransportHeader(char const* buf,
 				 unsigned char& rtpChannelId, // if TCP
 				 unsigned char& rtcpChannelId // if TCP
 				 ) {
-  // Initialize the return parameters to default values:
+  // Initialize the result parameters to default values:
   tcpStreamingRequested = False;
   destinationAddressStr = NULL;
   destinationTTL = 255;
@@ -466,8 +475,8 @@ static void parseTransportHeader(char const* buf,
     }
 
     fields += strlen(field);
-    while (fields[0] == ';') ++fields; // skip over all leading ';' chars
-    if (fields[0] == '\0') break;
+    while (*fields == ';') ++fields; // skip over separating ';' chars
+    if (*fields == '\0' || *fields == '\r' || *fields == '\n') break;
   }
   delete[] field;
 }
@@ -650,12 +659,6 @@ void RTSPServer::RTSPClientSession
 
 void RTSPServer::RTSPClientSession
   ::handleCmd_TEARDOWN(ServerMediaSubsession* subsession, char const* cseq) {
-  for (unsigned i = 0; i < fNumStreamStates; ++i) {
-    if (subsession == NULL /* means: aggregated operation */
-	|| subsession == fStreamStates[i].subsession) {
-      fStreamStates[i].subsession->endStream(fStreamStates[i].streamToken);
-    }
-  }
   sprintf((char*)fBuffer, "RTSP/1.0 200 OK\r\nCSeq: %s\r\n\r\n", cseq);
   fSessionIsActive = False; // triggers deletion of ourself after responding
 }
@@ -665,7 +668,8 @@ void RTSPServer::RTSPClientSession
   for (unsigned i = 0; i < fNumStreamStates; ++i) {
     if (subsession == NULL /* means: aggregated operation */
 	|| subsession == fStreamStates[i].subsession) {
-      fStreamStates[i].subsession->startStream(fStreamStates[i].streamToken);
+      fStreamStates[i].subsession->startStream(fOurSessionId,
+					       fStreamStates[i].streamToken);
     }
   }
   sprintf((char*)fBuffer, "RTSP/1.0 200 OK\r\nCSeq: %s\r\nSession: %d\r\n\r\n",
@@ -677,11 +681,117 @@ void RTSPServer::RTSPClientSession
   for (unsigned i = 0; i < fNumStreamStates; ++i) {
     if (subsession == NULL /* means: aggregated operation */
 	|| subsession == fStreamStates[i].subsession) {
-      fStreamStates[i].subsession->pauseStream(fStreamStates[i].streamToken);
+      fStreamStates[i].subsession->pauseStream(fOurSessionId,
+					       fStreamStates[i].streamToken);
     }
   }
   sprintf((char*)fBuffer, "RTSP/1.0 200 OK\r\nCSeq: %s\r\nSession: %d\r\n\r\n",
 	  cseq, fOurSessionId);
+}
+
+static Boolean parseAuthorizationHeader(char const* buf,
+					char const*& username,
+					char const*& realm,
+					char const*& nonce, char const*& uri,
+					char const*& response) {
+  // Initialize the result parameters to default values:
+  username = realm = nonce = uri = response = NULL;
+
+  // First, find "Authorization:"
+  while (1) {
+    if (*buf == '\0') return False; // not found
+    if (_strncasecmp(buf, "Authorization: Digest ", 22) == 0) break;
+    ++buf;
+  }
+
+  // Then, run through each of the fields, looking for ones we handle:
+  char const* fields = buf + 22;
+  while (*fields == ' ') ++fields;
+  char* parameter = strDupSize(fields);
+  char* value = strDupSize(fields);
+  while (1) {
+    value[0] = '\0';
+    if (sscanf(fields, "%[^=]=\"%[^\"]\"", parameter, value) != 2 &&
+	sscanf(fields, "%[^=]=\"\"", parameter) != 1) {
+      break;
+    }
+    if (strcmp(parameter, "username") == 0) {
+      username = strDup(value);
+    } else if (strcmp(parameter, "realm") == 0) {
+      realm = strDup(value);
+    } else if (strcmp(parameter, "nonce") == 0) {
+      nonce = strDup(value);
+    } else if (strcmp(parameter, "uri") == 0) {
+      uri = strDup(value);
+    } else if (strcmp(parameter, "response") == 0) {
+      response = strDup(value);
+    }
+
+    fields += strlen(parameter) + 2 /*="*/ + strlen(value) + 1 /*"*/;
+    while (*fields == ',' || *fields == ' ') ++fields;
+        // skip over any separating ',' and ' ' chars
+    if (*fields == '\0' || *fields == '\r' || *fields == '\n') break;
+  }
+  delete[] parameter; delete[] value;
+  return True;
+}
+
+Boolean RTSPServer::RTSPClientSession
+::authenticationOK(char const* cmdName, char const* cseq,
+		   char const* fullRequestStr) {
+  // If we weren't set up with an authentication database, we're OK:
+  if (fOurServer.fAuthDB == NULL) return True;
+
+  char const* username = NULL; char const* realm = NULL; char const* nonce = NULL;
+  char const* uri = NULL; char const* response = NULL;
+  Boolean success = False;
+
+  do {
+    // To authenticate, we first need to have a nonce set up
+    // from a previous attempt:
+    if (fCurrentAuthenticator.nonce() == NULL) break;
+
+    // Next, the request needs to contain an "Authorization:" header,
+    // containing a username, (our) realm, (our) nonce, uri,
+    // and response string:
+    if (!parseAuthorizationHeader(fullRequestStr,
+				  username, realm, nonce, uri, response)
+	|| username == NULL
+	|| realm == NULL || strcmp(realm, fCurrentAuthenticator.realm()) != 0
+	|| nonce == NULL || strcmp(nonce, fCurrentAuthenticator.nonce()) != 0
+	|| uri == NULL || response == NULL) {
+      break;
+    }
+
+    // Next, the username has to be known to us:
+    char const* password = fOurServer.fAuthDB->lookupPassword(username);
+    if (password == NULL) break;
+    fCurrentAuthenticator.
+      setUsernameAndPassword(username, password,
+			     fOurServer.fAuthDB->passwordsAreMD5());
+
+    // Finally, compute a digest response from the information that we have,
+    // and compare it to the one that we were given:
+    char const* ourResponse
+      = fCurrentAuthenticator.computeDigestResponse(cmdName, uri);
+    success = (strcmp(ourResponse, response) == 0);
+    fCurrentAuthenticator.reclaimDigestResponse(ourResponse);
+  } while (0);
+
+  delete[] (char*)username; delete[] (char*)realm; delete[] (char*)nonce;
+  delete[] (char*)uri; delete[] (char*)response;
+  if (success) return True;
+
+  // If we get here, there was some kind of authentication failure.
+  // Send back a "401 Unauthorized" response, with a new random nonce:
+  fCurrentAuthenticator.setRealmAndRandomNonce(fOurServer.fAuthDB->realm());
+  sprintf((char*)fBuffer,
+	  "RTSP/1.0 401 Unauthorized\r\n"
+	  "CSeq: %s\r\n"
+	  "WWW-Authenticate: Digest realm=\"%s\", nonce=\"%s\"\r\n\r\n",
+	  cseq,
+	  fCurrentAuthenticator.realm(), fCurrentAuthenticator.nonce());
+  return False;
 }
 
 Boolean
@@ -786,4 +896,32 @@ RTSPServer::RTSPClientSession
   if (!parseSucceeded) return False;
 
   return True;
+}
+
+
+////////// UserAuthenticationDatabase implementation //////////
+
+UserAuthenticationDatabase::UserAuthenticationDatabase(char const* realm,
+						       Boolean passwordsAreMD5)
+  : fTable(HashTable::create(STRING_HASH_KEYS)),
+    fRealm(strDup(realm == NULL ? "LIVE.COM Streaming Media" : realm)),
+    fPasswordsAreMD5(passwordsAreMD5) {
+}
+
+UserAuthenticationDatabase::~UserAuthenticationDatabase() {
+  delete[] fRealm;
+  delete fTable;
+}
+
+void UserAuthenticationDatabase::addUserRecord(char const* username,
+					       char const* password) {
+  fTable->Add(username, (void*)password);
+}
+
+void UserAuthenticationDatabase::removeUserRecord(char const* username) {
+  fTable->Remove(username);
+}
+
+char const* UserAuthenticationDatabase::lookupPassword(char const* username) {
+  return (char const*)(fTable->Lookup(username));
 }

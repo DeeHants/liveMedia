@@ -15,56 +15,55 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 **********/
 // "liveMedia"
 // Copyright (c) 1996-2004 Live Networks, Inc.  All rights reserved.
-// MPEG4-GENERIC ("audio", "video", or "application") RTP stream sinks
+// RTP sink for MPEG-4 audio, using LATM multiplexing (RFC 3016)
+// (Note that the initial 'size' field is assumed to be present at the start of
+//  each frame.)
 // C++ header
 
-#ifndef _MPEG4_GENERIC_RTP_SINK_HH
-#define _MPEG4_GENERIC_RTP_SINK_HH
+#ifndef _MPEG4_LATM_AUDIO_RTP_SINK_HH
+#define _MPEG4_LATM_AUDIO_RTP_SINK_HH
 
-#ifndef _MULTI_FRAMED_RTP_SINK_HH
-#include "MultiFramedRTPSink.hh"
+#ifndef _AUDIO_RTP_SINK_HH
+#include "AudioRTPSink.hh"
 #endif
 
-class MPEG4GenericRTPSink: public MultiFramedRTPSink {
+class MPEG4LATMAudioRTPSink: public AudioRTPSink {
 public:
-  static MPEG4GenericRTPSink*
-  createNew(UsageEnvironment& env, Groupsock* RTPgs,
-	    u_int8_t rtpPayloadFormat, u_int32_t rtpTimestampFrequency,
-	    char const* sdpMediaTypeString, char const* mpeg4Mode,
-	    char const* configString,
-	    unsigned numChannels = 1);
+  static MPEG4LATMAudioRTPSink* createNew(UsageEnvironment& env,
+					  Groupsock* RTPgs,
+					  unsigned char rtpPayloadFormat,
+					  u_int32_t rtpTimestampFrequency,
+					  char const* streamMuxConfigString,
+					  unsigned numChannels,
+					  Boolean allowMultipleFramesPerPacket = False);
 
 protected:
-  MPEG4GenericRTPSink(UsageEnvironment& env, Groupsock* RTPgs,
-		      u_int8_t rtpPayloadFormat,
-		      u_int32_t rtpTimestampFrequency,
-		      char const* sdpMediaTypeString,
-		      char const* mpeg4Mode, char const* configString,
-		      unsigned numChannels);
+  MPEG4LATMAudioRTPSink(UsageEnvironment& env, Groupsock* RTPgs,
+			unsigned char rtpPayloadFormat,
+			u_int32_t rtpTimestampFrequency,
+			char const* streamMuxConfigString,
+			unsigned numChannels,
+			Boolean allowMultipleFramesPerPacket);
 	// called only by createNew()
 
-  virtual ~MPEG4GenericRTPSink();
+  virtual ~MPEG4LATMAudioRTPSink();
 
 private: // redefined virtual functions:
-  virtual
-  Boolean frameCanAppearAfterPacketStart(unsigned char const* frameStart,
-					 unsigned numBytesInFrame) const;
   virtual void doSpecialFrameHandling(unsigned fragmentationOffset,
                                       unsigned char* frameStart,
                                       unsigned numBytesInFrame,
                                       struct timeval frameTimestamp,
                                       unsigned numRemainingBytes);
-  virtual unsigned specialHeaderSize() const;
-
-  virtual char const* sdpMediaType() const;
+  virtual Boolean
+  frameCanAppearAfterPacketStart(unsigned char const* frameStart,
+				 unsigned numBytesInFrame) const;
 
   virtual char const* auxSDPLine(); // for the "a=fmtp:" SDP line
 
 private:
-  char const* fSDPMediaTypeString;
-  char const* fMPEG4Mode;
-  char const* fConfigString;
+  char const* fStreamMuxConfigString;
   char* fFmtpSDPLine;
+  Boolean fAllowMultipleFramesPerPacket;
 };
 
 #endif
