@@ -91,3 +91,12 @@ RTPSink* MPEG1or2DemuxedServerMediaSubsession
     return NULL;
   }
 }
+
+void MPEG1or2DemuxedServerMediaSubsession
+::seekStreamSource(FramedSource* /*inputSource*/, float /*seekNPT*/) {
+  //#####@@@@@
+}
+
+float MPEG1or2DemuxedServerMediaSubsession::duration() const {
+  return 0.0;//#####@@@@@
+}

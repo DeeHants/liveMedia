@@ -18,14 +18,10 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 // A sink that generates a QuickTime file from a composite media session
 // Implementation
 
-#if (defined(__WIN32__) || defined(_WIN32)) && !defined(_WIN32_WCE)
-#include <io.h>
-#include <fcntl.h>
-#endif
-
 #include "QuickTimeFileSink.hh"
 #include "QuickTimeGenericRTPSource.hh"
 #include "GroupsockHelper.hh"
+#include "OutputFile.hh"
 #include "H263plusVideoRTPSource.hh" // for the special header
 #include "MPEG4GenericRTPSource.hh" //for "samplingFrequencyFromAudioSpecificConfig()"
 #include "MPEG4LATMAudioRTPSource.hh" // for "parseGeneralConfigStr()"
@@ -206,12 +202,6 @@ private:
 
 ////////// QuickTimeFileSink implementation //////////
 
-#ifdef BSD
-static struct timezone Idunno;
-#else
-static int Idunno;
-#endif
-
 QuickTimeFileSink::QuickTimeFileSink(UsageEnvironment& env,
 				     MediaSession& inputSession,
 				     FILE* outFid,
@@ -221,10 +211,12 @@ QuickTimeFileSink::QuickTimeFileSink(UsageEnvironment& env,
 				     unsigned movieFPS,
 				     Boolean packetLossCompensate,
 				     Boolean syncStreams,
-				     Boolean generateHintTracks)
+				     Boolean generateHintTracks,
+				     Boolean generateMP4Format)
   : Medium(env), fInputSession(inputSession), fOutFid(outFid),
     fBufferSize(bufferSize), fPacketLossCompensate(packetLossCompensate),
-    fSyncStreams(syncStreams), fAreCurrentlyBeingPlayed(False),
+    fSyncStreams(syncStreams), fGenerateMP4Format(generateMP4Format),
+    fAreCurrentlyBeingPlayed(False),
     fLargestRTPtimestampFrequency(0),
     fNumSubsessions(0), fNumSyncedSubsessions(0),
     fHaveCompletedOutputFile(False),
@@ -290,7 +282,7 @@ QuickTimeFileSink::QuickTimeFileSink(UsageEnvironment& env,
   // Use the current time as the file's creation and modification
   // time.  Use Apple's time format: seconds since January 1, 1904
 
-  gettimeofday(&fStartTime, &Idunno);
+  gettimeofday(&fStartTime, NULL);
   fAppleCreationTime = fStartTime.tv_sec - 0x83dac000;
 
   // Begin by writing a "mdat" atom at the start of the file.
@@ -316,9 +308,6 @@ QuickTimeFileSink::~QuickTimeFileSink() {
   }
 }
 
-static FILE* openFileByName(UsageEnvironment& env, char const* fileName);
-    // forward
-
 QuickTimeFileSink*
 QuickTimeFileSink::createNew(UsageEnvironment& env,
 			     MediaSession& inputSession,
@@ -329,17 +318,18 @@ QuickTimeFileSink::createNew(UsageEnvironment& env,
 			     unsigned movieFPS,
 			     Boolean packetLossCompensate,
 			     Boolean syncStreams,
-			     Boolean generateHintTracks) {
+			     Boolean generateHintTracks,
+			     Boolean generateMP4Format) {
   QuickTimeFileSink* newSink = NULL;
 
   do {
-    FILE* fid = openFileByName(env, outputFileName);
+    FILE* fid = OpenOutputFile(env, outputFileName);
     if (fid == NULL) break;
 
     return new QuickTimeFileSink(env, inputSession, fid, bufferSize,
 				 movieWidth, movieHeight, movieFPS,
 				 packetLossCompensate, syncStreams,
-				 generateHintTracks);
+				 generateHintTracks, generateMP4Format);
   } while (0);
 
   delete newSink;
@@ -436,7 +426,7 @@ void QuickTimeFileSink::onRTCPBye(void* clientData) {
   SubsessionIOState* ioState = (SubsessionIOState*)clientData;
 
   struct timeval timeNow;
-  gettimeofday(&timeNow, &Idunno);
+  gettimeofday(&timeNow, NULL);
   unsigned secsDiff
     = timeNow.tv_sec - ioState->fOurSink.fStartTime.tv_sec;
 
@@ -495,38 +485,16 @@ void QuickTimeFileSink::completeOutputFile() {
     }
   }
 
+  if (fGenerateMP4Format) {
+    // Begin with a "ftyp" atom:
+    addAtom_ftyp();
+  }
+
   // Then, add a "moov" atom for the file metadata:
   addAtom_moov();
 
   // We're done:
   fHaveCompletedOutputFile = True;
-}
-
-// NOTE: The following is the same code that's in "FileSink"
-// Someday we should share it #####
-static FILE* openFileByName(UsageEnvironment& env, char const* fileName) {
-  FILE* fid;
-    
-  // Check for special case 'file names': "stdout" and "stderr"
-  if (strcmp(fileName, "stdout") == 0) {
-    fid = stdout;
-#if defined(__WIN32__) || defined(_WIN32)
-    _setmode(_fileno(stdout), _O_BINARY);       // convert to binary mode
-#endif
-  } else if (strcmp(fileName, "stderr") == 0) {
-    fid = stderr;
-#if defined(__WIN32__) || defined(_WIN32)
-    _setmode(_fileno(stderr), _O_BINARY);       // convert to binary mode
-#endif
-  } else {
-    fid = fopen(fileName, "wb");
-  }
-
-  if (fid == NULL) {
-    env.setResultMsg("unable to open file \"", fileName, "\"");
-  }
-
-  return fid;
 }
 
 
@@ -562,7 +530,7 @@ SubsessionIOState::~SubsessionIOState() {
 Boolean SubsessionIOState::setQTstate() {
   char const* noCodecWarning1 = "Warning: We don't implement a QuickTime ";
   char const* noCodecWarning2 = " Media Data Type for the \"";
-  char const* noCodecWarning3 = "\" track, so we'll insert a dummy \"???\" Media Data Atom instead.  A separate, codec-specific editing pass will be needed before this track can be played.\n";
+  char const* noCodecWarning3 = "\" track, so we'll insert a dummy \"????\" Media Data Atom instead.  A separate, codec-specific editing pass will be needed before this track can be played.\n";
   Boolean supportPartiallyOnly = False;
 
   do {
@@ -607,7 +575,8 @@ Boolean SubsessionIOState::setQTstate() {
       } else if (strcmp(fOurSubsession.codecName(), "QCELP") == 0) {
 	fQTMediaDataAtomCreator = &QuickTimeFileSink::addAtom_Qclp;
 	fQTSamplesPerFrame = 160;
-      } else if (strcmp(fOurSubsession.codecName(), "MPEG4-GENERIC") == 0) {
+      } else if (strcmp(fOurSubsession.codecName(), "MPEG4-GENERIC") == 0 ||
+		 strcmp(fOurSubsession.codecName(), "MP4A-LATM") == 0) {
 	fQTMediaDataAtomCreator = &QuickTimeFileSink::addAtom_mp4a;
 	fQTTimeUnitsPerSample = 1024; // QT considers each frame to be a 'sample'
 	// The time scale (frequency) comes from the 'config' information.
@@ -675,9 +644,7 @@ void SubsessionIOState::setFinalQTstate() {
   ChunkDescriptor* chunk = fHeadChunk;
   while (chunk != NULL) {
     unsigned const numFrames = chunk->fNumFrames;
-    unsigned const dur
-      = numFrames*chunk->fFrameDuration/fOurSubsession.numChannels();
-
+    unsigned const dur = numFrames*chunk->fFrameDuration;
     fQTDurationT += dur;
 
     chunk = chunk->fNextChunk;
@@ -817,7 +784,7 @@ void SubsessionIOState::useFrame(SubsessionBuffer& buffer) {
   }
 
   // Write the data into the file:
-  fwrite(frameSource, frameSize, 1, fOurSink.fOutFid);
+  fwrite(frameSource, 1, frameSize, fOurSink.fOutFid);
 
   // If we have a hint track, then write to it also:
   if (hasHintTrack()) {
@@ -842,9 +809,12 @@ void SubsessionIOState::useFrameForHinting(unsigned frameSize,
   // However, for some RTP sources, then we also need to reuse the special
   // header bytes that were at the start of each of the RTP packets.
   Boolean hack263 = strcmp(fOurSubsession.codecName(), "H263-1998") == 0;
-  Boolean hackm4a = strcmp(fOurSubsession.mediumName(), "audio") == 0
+  Boolean hackm4a_generic = strcmp(fOurSubsession.mediumName(), "audio") == 0
     && strcmp(fOurSubsession.codecName(), "MPEG4-GENERIC") == 0;
-  Boolean haveSpecialHeaders = (hack263 || hackm4a);
+  Boolean hackm4a_latm = strcmp(fOurSubsession.mediumName(), "audio") == 0
+    && strcmp(fOurSubsession.codecName(), "MP4A-LATM") == 0;
+  Boolean hackm4a = hackm4a_generic || hackm4a_latm;
+  Boolean haveSpecialHeaders = (hack263 || hackm4a_generic);
 
   // If there has been a previous frame, then output a 'hint sample' for it.
   // (We use the current frame's presentation time to compute the previous
@@ -1007,7 +977,7 @@ void SubsessionIOState::useFrameForHinting(unsigned frameSize,
     for (i = 0; i < rs_263->fNumSpecialHeaders; ++i) {
       fPrevFrameState.packetSizes[i] = rs_263->fPacketSizes[i];
     }
-  } else if (hackm4a) {
+  } else if (hackm4a_generic) {
     // Synthesize a special header, so that this frame can be in its own RTP packet.
     unsigned const sizeLength = fOurSubsession.fmtp_sizelength();
     unsigned const indexLength = fOurSubsession.fmtp_indexlength();
@@ -1235,18 +1205,30 @@ void QuickTimeFileSink::setWord(unsigned filePosn, unsigned size) {
   return size; \
 }
 
+addAtom(ftyp);
+  size += add4ByteString("mp42");
+  size += addWord(0x00000000);
+  size += add4ByteString("mp42");
+  size += add4ByteString("isom");
+addAtomEnd;
+
 addAtom(moov);
   size += addAtom_mvhd();
+
+  if (fGenerateMP4Format) {
+    size += addAtom_iods();
+  }
 
   // Add a 'trak' atom for each subsession:
   // (For some unknown reason, QuickTime Player (5.0 at least)
   //  doesn't display the movie correctly unless the audio track
   //  (if present) appears before the video track.  So ensure this here.)
   MediaSubsessionIterator iter(fInputSession);
-  while ((fCurrentSubsession = iter.next()) != NULL) {
-    fCurrentIOState = (SubsessionIOState*)(fCurrentSubsession->miscPtr); 
+  MediaSubsession* subsession;
+  while ((subsession = iter.next()) != NULL) {
+    fCurrentIOState = (SubsessionIOState*)(subsession->miscPtr); 
     if (fCurrentIOState == NULL) continue;
-    if (strcmp(fCurrentSubsession->mediumName(), "audio") != 0) continue;
+    if (strcmp(subsession->mediumName(), "audio") != 0) continue;
 
     size += addAtom_trak();
 
@@ -1257,10 +1239,10 @@ addAtom(moov);
     }
   }
   iter.reset();
-  while ((fCurrentSubsession = iter.next()) != NULL) {
-    fCurrentIOState = (SubsessionIOState*)(fCurrentSubsession->miscPtr); 
+  while ((subsession = iter.next()) != NULL) {
+    fCurrentIOState = (SubsessionIOState*)(subsession->miscPtr); 
     if (fCurrentIOState == NULL) continue;
-    if (strcmp(fCurrentSubsession->mediumName(), "audio") == 0) continue;
+    if (strcmp(subsession->mediumName(), "audio") == 0) continue;
 
     size += addAtom_trak();
 
@@ -1295,6 +1277,13 @@ addAtom(mvhd);
   size += addWord(0x40000000); // matrix bottom right corner
   size += addZeroWords(6); // various time fields
   size += addWord(SubsessionIOState::fCurrentTrackNumber+1);// Next track ID
+addAtomEnd;
+
+addAtom(iods);
+  size += addWord(0x00000000); // Version + Flags
+  size += addWord(0x10808080);
+  size += addWord(0x07004FFF);
+  size += addWord(0xFF0FFFFF);
 addAtomEnd;
 
 addAtom(trak);
@@ -1338,8 +1327,12 @@ addAtom(tkhd);
   size += addWord(0x00010000); // matrix center
   size += addZeroWords(3); // matrix
   size += addWord(0x40000000); // matrix bottom right corner
-  size += addWord(fMovieWidth<<16); // Track width
-  size += addWord(fMovieHeight<<16); // Track height
+  if (strcmp(fCurrentIOState->fOurSubsession.mediumName(), "video") == 0) {
+    size += addWord(fMovieWidth<<16); // Track width
+    size += addWord(fMovieHeight<<16); // Track height
+  } else {
+    size += addZeroWords(2); // not video: leave width and height fields zero
+  }
 addAtomEnd;
 
 addAtom(edts);
@@ -1661,15 +1654,19 @@ unsigned QuickTimeFileSink::addAtom_mp4a() {
   fCurrentIOState->fQTSoundSampleVersion = 1;
   unsigned size = addAtom_soundMediaGeneral();
 
-  // Next, add the four fields that are particular to version 1:
-  // (Later, parameterize these #####)
-  size += addWord(fCurrentIOState->fQTTimeUnitsPerSample);
-  size += addWord(0x00000001); // ???
-  size += addWord(0x00000001); // ???
-  size += addWord(0x00000002); // bytes per sample (uncompressed)
+  if (fGenerateMP4Format) {
+    size += addAtom_esds();
+  } else {
+    // Next, add the four fields that are particular to version 1:
+    // (Later, parameterize these #####)
+    size += addWord(fCurrentIOState->fQTTimeUnitsPerSample);
+    size += addWord(0x00000001); // ???
+    size += addWord(0x00000001); // ???
+    size += addWord(0x00000002); // bytes per sample (uncompressed)
 
-  // Other special fields are in a 'wave' atom that follows:
-  size += addAtom_wave();
+    // Other special fields are in a 'wave' atom that follows:
+    size += addAtom_wave();
+  }
 addAtomEnd;
 
 addAtom(esds);

@@ -18,16 +18,9 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 // MP3 File Sources
 // Implementation
 
-#ifndef _WIN32_WCE
-#include <sys/stat.h>
-#endif
-#if (defined(__WIN32__) || defined(_WIN32)) && !defined(_WIN32_WCE)
-#include <io.h>
-#include <fcntl.h>
-#endif
-
 #include "MP3FileSource.hh"
 #include "MP3StreamState.hh"
+#include "InputFile.hh"
 
 ////////// MP3FileSource //////////
 
@@ -41,7 +34,7 @@ MP3FileSource::~MP3FileSource() {
 }
 
 char const* MP3FileSource::MIMEtype() const {
-  return "audio/mpeg";
+  return "audio/MPEG";
 }
 
 MP3FileSource* MP3FileSource::createNew(UsageEnvironment& env, char const* fileName) {
@@ -49,35 +42,14 @@ MP3FileSource* MP3FileSource::createNew(UsageEnvironment& env, char const* fileN
 
   do {
     FILE* fid;
-    unsigned fileSize = 0;
 
-    // Check for a special case file name: "stdin"
-    if (strcmp(fileName, "stdin") == 0) {
-      fid = stdin;
-#if defined(__WIN32__) || defined(_WIN32)
-      _setmode(_fileno(stdin), _O_BINARY); // convert to binary mode
-#endif
-    } else { 
-      fid = fopen(fileName, "rb");
-      if (fid == NULL) {
-	env.setResultMsg("unable to open file \"",fileName, "\"");
-	break;
-      }
-#if defined(_WIN32_WCE)
-        fseek(fid, 0, SEEK_END);
-        fileSize = ftell(fid);
-        fseek(fid, 0, SEEK_SET);
-#else
-        struct stat sb;
-        if (stat(fileName, &sb) == 0) {
-            fileSize = sb.st_size;
-        }
-#endif
-    }
+    fid = OpenInputFile(env, fileName);
+    if (fid == NULL) break;
 
     newSource = new MP3FileSource(env, fid);
     if (newSource == NULL) break;
 
+    unsigned fileSize = GetFileSize(fileName, fid);
     newSource->assignStream(fid, fileSize);
     if (!newSource->initializeStream()) break;
 
@@ -86,6 +58,18 @@ MP3FileSource* MP3FileSource::createNew(UsageEnvironment& env, char const* fileN
 
   delete newSource;
   return NULL;
+}
+
+float MP3FileSource::filePlayTime() const {
+  return fStreamState->filePlayTime();
+}
+
+void MP3FileSource::setPresentationTimeScale(unsigned scale) {
+  fStreamState->setPresentationTimeScale(scale);
+}
+
+void MP3FileSource::seekWithinFile(float seekNPT) {
+  fStreamState->seekWithinFile(seekNPT);
 }
 
 void MP3FileSource::getAttributes() const {

@@ -43,12 +43,6 @@ Boolean RTPSink::isRTPSink() const {
   return True;
 }
 
-#ifdef BSD
-static struct timezone Idunno;
-#else
-static int Idunno;
-#endif
-
 RTPSink::RTPSink(UsageEnvironment& env,
 		 Groupsock* rtpGS, unsigned char rtpPayloadType,
 		 unsigned rtpTimestampFrequency,
@@ -58,9 +52,10 @@ RTPSink::RTPSink(UsageEnvironment& env,
     fRTPPayloadType(rtpPayloadType),
     fPacketCount(0), fOctetCount(0), fTotalOctetCount(0),
     fTimestampFrequency(rtpTimestampFrequency),
-    fRTPPayloadFormatName(strDup(rtpPayloadFormatName)),
     fNumChannels(numChannels) {
-  gettimeofday(&fCreationTime, &Idunno);
+  fRTPPayloadFormatName
+    = strDup(rtpPayloadFormatName == NULL ? "???" : rtpPayloadFormatName);
+  gettimeofday(&fCreationTime, NULL);
   fTotalOctetCountStartTime = fCreationTime;
 
   fSeqNo = (unsigned short)our_random();
@@ -75,27 +70,40 @@ RTPSink::~RTPSink() {
   delete[] (char*)fRTPPayloadFormatName;
 }
 
-unsigned RTPSink::convertToRTPTimestamp(struct timeval timestamp) const {
-  unsigned rtpTimestamp = fTimestampBase;
-  rtpTimestamp += (fTimestampFrequency*timestamp.tv_sec);
-  rtpTimestamp += (unsigned)
-    ((2.0*fTimestampFrequency*timestamp.tv_usec + 1000000.0)/2000000);
-       // note: rounding
+u_int32_t RTPSink::convertToRTPTimestamp(struct timeval tv, Boolean isFirstTime) {
+  if (isFirstTime) {
+    // Make the first timestamp the same as the current "fTimestampBase", so that
+    // timestamps begin with the value we promised when this "RTPSink" was created:
+    u_int32_t rtpTimestampIncrement = timevalToTimestamp(tv);
+    fTimestampBase -= rtpTimestampIncrement;
+  }
+
+  return convertToRTPTimestamp(tv);
+}
+
+u_int32_t RTPSink::convertToRTPTimestamp(struct timeval tv) const {
+  u_int32_t const rtpTimestamp = fTimestampBase + timevalToTimestamp(tv);
 
 #ifdef DEBUG_TIMESTAMPS
-  fprintf(stderr, "timestamp base: %u, presentationTime: %u.%06u,\n\tRTP timestamp: 0x%08x\n",
-	  fTimestampBase, timestamp.tv_sec,
-	  timestamp.tv_usec, rtpTimestamp);
+  fprintf(stderr, "fTimestampBase: 0x%08x, tv: %lu.%06ld\n\t=> RTP timestamp: 0x%08x\n",
+	  fTimestampBase, tv.tv_sec, tv.tv_usec, rtpTimestamp);
   fflush(stderr);
 #endif
 
   return rtpTimestamp;
 }
 
+u_int32_t RTPSink::timevalToTimestamp(struct timeval tv) const {
+  u_int32_t timestamp = (fTimestampFrequency*tv.tv_sec);
+  timestamp += (unsigned)((2.0*fTimestampFrequency*tv.tv_usec + 1000000.0)/2000000);
+       // note: rounding
+  return timestamp;
+}
+
 void RTPSink::getTotalBitrate(unsigned& outNumBytes,
 			      double& outElapsedTime) {
   struct timeval timeNow;
-  gettimeofday(&timeNow, &Idunno);
+  gettimeofday(&timeNow, NULL);
 
   outNumBytes = fTotalOctetCount;
   outElapsedTime = (double)(timeNow.tv_sec-fTotalOctetCountStartTime.tv_sec)
@@ -108,6 +116,32 @@ void RTPSink::getTotalBitrate(unsigned& outNumBytes,
 char const* RTPSink::sdpMediaType() const {
   return "data";
   // default SDP media (m=) type, unless redefined by subclasses
+}
+
+char* RTPSink::rtpmapLine() const {
+  if (rtpPayloadType() >= 96) { // the payload format type is dynamic
+    char* encodingParamsPart;
+    if (numChannels() != 1) {
+      encodingParamsPart = new char[1 + 20 /* max int len */];
+      sprintf(encodingParamsPart, "/%d", numChannels());
+    } else {
+      encodingParamsPart = strDup("");
+    }
+    char const* const rtpmapFmt = "a=rtpmap:%d %s/%d%s\r\n";
+    unsigned rtpmapFmtSize = strlen(rtpmapFmt)
+      + 3 /* max char len */ + strlen(rtpPayloadFormatName())
+      + 20 /* max int len */ + strlen(encodingParamsPart);
+    char* rtpmapLine = new char[rtpmapFmtSize];
+    sprintf(rtpmapLine, rtpmapFmt,
+	    rtpPayloadType(), rtpPayloadFormatName(),
+	    rtpTimestampFrequency(), encodingParamsPart);
+    delete[] encodingParamsPart;
+
+    return rtpmapLine;
+  } else {
+    // The payload format is staic, so there's no "a=rtpmap:" line:
+    return strDup("");
+  }
 }
 
 char const* RTPSink::auxSDPLine() {
@@ -135,7 +169,7 @@ RTPTransmissionStatsDB::~RTPTransmissionStatsDB() {
 }
 
 void RTPTransmissionStatsDB
-::noteIncomingRR(unsigned SSRC,
+::noteIncomingRR(unsigned SSRC, struct sockaddr_in const& lastFromAddress,
                  unsigned lossStats, unsigned lastPacketNumReceived,
                  unsigned jitter, unsigned lastSRTime, unsigned diffSR_RRTime) {
   RTPTransmissionStats* stats = lookup(SSRC);
@@ -150,8 +184,16 @@ void RTPTransmissionStatsDB
 #endif
   }
 
-  stats->noteIncomingRR(lossStats, lastPacketNumReceived, jitter,
+  stats->noteIncomingRR(lastFromAddress,
+			lossStats, lastPacketNumReceived, jitter,
                         lastSRTime, diffSR_RRTime);
+}
+
+void RTPTransmissionStatsDB::removeRecord(unsigned SSRC) {
+  long SSRC_long = (long)SSRC;
+  if (fTable->Remove((char const*)SSRC_long)) {
+    --fNumReceivers;
+  }
 }
 
 RTPTransmissionStatsDB::Iterator
@@ -187,17 +229,22 @@ void RTPTransmissionStatsDB::add(unsigned SSRC, RTPTransmissionStats* stats) {
 RTPTransmissionStats::RTPTransmissionStats(RTPSink& rtpSink, unsigned SSRC)
   : fOurRTPSink(rtpSink), fSSRC(SSRC), fLastPacketNumReceived(0),
     fPacketLossRatio(0), fTotNumPacketsLost(0), fJitter(0),
-    fLastSRTime(0), fDiffSR_RRTime(0),
-    fFirstPacket(True) {
+    fLastSRTime(0), fDiffSR_RRTime(0), fFirstPacket(True),
+    fTotalOctetCount_hi(0), fTotalOctetCount_lo(0), 
+    fTotalPacketCount_hi(0), fTotalPacketCount_lo(0) {
+  gettimeofday(&fTimeCreated, NULL);
+
+  fLastOctetCount = rtpSink.octetCount();
+  fLastPacketCount = rtpSink.packetCount();
 }
 
 RTPTransmissionStats::~RTPTransmissionStats() {}
 
-void RTPTransmissionStats::noteIncomingRR(unsigned lossStats,
-					  unsigned lastPacketNumReceived,
-					  unsigned jitter,
-					  unsigned lastSRTime,
-					  unsigned diffSR_RRTime) {
+void RTPTransmissionStats
+::noteIncomingRR(struct sockaddr_in const& lastFromAddress,
+		 unsigned lossStats, unsigned lastPacketNumReceived,
+		 unsigned jitter, unsigned lastSRTime,
+		 unsigned diffSR_RRTime) {
   if (fFirstPacket) {
     fFirstPacket = False;
     fFirstPacketNumReported = lastPacketNumReceived;
@@ -206,8 +253,9 @@ void RTPTransmissionStats::noteIncomingRR(unsigned lossStats,
     fOldLastPacketNumReceived = fLastPacketNumReceived;
     fOldTotNumPacketsLost = fTotNumPacketsLost;
   }
-  gettimeofday(&fTimeReceived, &Idunno);
+  gettimeofday(&fTimeReceived, NULL);
 
+  fLastFromAddress = lastFromAddress;
   fPacketLossRatio = lossStats>>24;
   fTotNumPacketsLost = lossStats&0xFFFFFF;
   fLastPacketNumReceived = lastPacketNumReceived;
@@ -220,6 +268,26 @@ void RTPTransmissionStats::noteIncomingRR(unsigned lossStats,
   unsigned rtd = roundTripDelay(); 
   fprintf(stderr, "=> round-trip delay: 0x%04x (== %f seconds)\n", rtd, rtd/65536.0);
 #endif
+
+  // Update our counts of the total number of octets and packets sent towards
+  // this receiver:
+  u_int32_t newOctetCount = fOurRTPSink.octetCount();
+  u_int32_t octetCountDiff = newOctetCount - fLastOctetCount;
+  fLastOctetCount = newOctetCount;
+  u_int32_t prevTotalOctetCount_lo = fTotalOctetCount_lo;
+  fTotalOctetCount_lo += octetCountDiff;
+  if (fTotalOctetCount_lo < prevTotalOctetCount_lo) { // wrap around
+    ++fTotalOctetCount_hi;
+  }
+
+  u_int32_t newPacketCount = fOurRTPSink.packetCount();
+  u_int32_t packetCountDiff = newPacketCount - fLastPacketCount;
+  fLastPacketCount = newPacketCount;
+  u_int32_t prevTotalPacketCount_lo = fTotalPacketCount_lo;
+  fTotalPacketCount_lo += packetCountDiff;
+  if (fTotalPacketCount_lo < prevTotalPacketCount_lo) { // wrap around
+    ++fTotalPacketCount_hi;
+  }
 }
 
 unsigned RTPTransmissionStats::roundTripDelay() const {
@@ -247,6 +315,16 @@ unsigned RTPTransmissionStats::roundTripDelay() const {
     rawResult = 0;
   }
   return (unsigned)rawResult;
+}
+
+void RTPTransmissionStats::getTotalOctetCount(u_int32_t& hi, u_int32_t& lo) {
+  hi = fTotalOctetCount_hi;
+  lo = fTotalOctetCount_lo;
+}
+
+void RTPTransmissionStats::getTotalPacketCount(u_int32_t& hi, u_int32_t& lo) {
+  hi = fTotalPacketCount_hi;
+  lo = fTotalPacketCount_lo;
 }
 
 unsigned RTPTransmissionStats::packetsReceivedSinceLastRR() const {

@@ -41,11 +41,15 @@ private:
   virtual ~WAVAudioFileServerMediaSubsession();
 
 private: // redefined virtual functions
+  virtual void seekStreamSource(FramedSource* inputSource, float seekNPT);
+  virtual void setStreamSourceScale(FramedSource* inputSource, float scale);
   virtual FramedSource* createNewStreamSource(unsigned clientSessionId,
 					      unsigned& estBitrate);
   virtual RTPSink* createNewRTPSink(Groupsock* rtpGroupsock,
                                     unsigned char rtpPayloadTypeIfDynamic,
 				    FramedSource* inputSource);
+  virtual void testScaleFactor(float& scale);
+  virtual float duration() const;
 
 private:
   Boolean fConvertToULaw;
@@ -55,6 +59,7 @@ private:
   unsigned char fBitsPerSample;
   unsigned fSamplingFrequency;
   unsigned fNumChannels;
+  float fFileDuration;
 };
 
 #endif

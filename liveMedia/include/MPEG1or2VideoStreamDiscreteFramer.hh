@@ -15,34 +15,37 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 **********/
 // "liveMedia"
 // Copyright (c) 1996-2004 Live Networks, Inc.  All rights reserved.
-// A simplified version of "MPEG4VideoStreamFramer" that takes only complete,
-// discrete frames (rather than an arbitrary byte stream) as input.
+// A simplified version of "MPEG1or2VideoStreamFramer" that takes only
+// complete, discrete frames (rather than an arbitrary byte stream) as input.
 // This avoids the parsing and data copying overhead of the full
-// "MPEG4VideoStreamFramer".
+// "MPEG1or2VideoStreamFramer".
 // C++ header
 
-#ifndef _MPEG4_VIDEO_STREAM_DISCRETE_FRAMER_HH
-#define _MPEG4_VIDEO_STREAM_DISCRETE_FRAMER_HH
+#ifndef _MPEG1or2_VIDEO_STREAM_DISCRETE_FRAMER_HH
+#define _MPEG1or2_VIDEO_STREAM_DISCRETE_FRAMER_HH
 
-#ifndef _MPEG4_VIDEO_STREAM_FRAMER_HH
-#include "MPEG4VideoStreamFramer.hh"
+#ifndef _MPEG1or2_VIDEO_STREAM_FRAMER_HH
+#include "MPEG1or2VideoStreamFramer.hh"
 #endif
 
-class MPEG4VideoStreamDiscreteFramer: public MPEG4VideoStreamFramer {
+class MPEG1or2VideoStreamDiscreteFramer: public MPEG1or2VideoStreamFramer {
 public:
-  static MPEG4VideoStreamDiscreteFramer*
-  createNew(UsageEnvironment& env, FramedSource* inputSource);
-
+  static MPEG1or2VideoStreamDiscreteFramer*
+  createNew(UsageEnvironment& env, FramedSource* inputSource,
+            Boolean iFramesOnly = False,
+            double vshPeriod = 5.0); // see MPEG1or2VideoStreamFramer.hh
+  
 private:
-  MPEG4VideoStreamDiscreteFramer(UsageEnvironment& env,
-				 FramedSource* inputSource);
-      // called only by createNew()
-  virtual ~MPEG4VideoStreamDiscreteFramer();
-
+  MPEG1or2VideoStreamDiscreteFramer(UsageEnvironment& env,
+                                    FramedSource* inputSource,
+                                    Boolean iFramesOnly, double vshPeriod);
+  // called only by createNew()
+  virtual ~MPEG1or2VideoStreamDiscreteFramer();
+                                                                                
 private:
   // redefined virtual functions:
   virtual void doGetNextFrame();
-
+                                                                                
 private:
   static void afterGettingFrame(void* clientData, unsigned frameSize,
                                 unsigned numTruncatedBytes,
@@ -53,18 +56,9 @@ private:
                           struct timeval presentationTime,
                           unsigned durationInMicroseconds);
 
-  Boolean getNextFrameBit(u_int8_t& result);
-  Boolean getNextFrameBits(unsigned numBits, u_int32_t& result);
-    // Which are used by:
-  void analyzeVOLHeader();
-
 private:
-  unsigned fNumBitsSeenSoFar; // used by the getNextFrameBit*() routines
-  u_int32_t vop_time_increment_resolution;
-  unsigned fNumVTIRBits;
-  // # of bits needed to count to "vop_time_increment_resolution"
   struct timeval fLastNonBFramePresentationTime;
-  unsigned fLastNonBFrameVop_time_increment;
+  unsigned fLastNonBFrameTemporal_reference;
 };
 
 #endif

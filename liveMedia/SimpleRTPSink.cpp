@@ -32,10 +32,11 @@ SimpleRTPSink::SimpleRTPSink(UsageEnvironment& env, Groupsock* RTPgs,
   : MultiFramedRTPSink(env, RTPgs, rtpPayloadFormat,
 		       rtpTimestampFrequency, rtpPayloadFormatName,
 		       numChannels),
-    fSDPMediaTypeString(strDup(sdpMediaTypeString)),
     fAllowMultipleFramesPerPacket(allowMultipleFramesPerPacket) {
+  fSDPMediaTypeString
+    = strDup(sdpMediaTypeString == NULL ? "unknown" : sdpMediaTypeString);
   fSetMBitOnLastFrames
-    = strcmp(sdpMediaTypeString, "video") == 0 && doNormalMBitRule;
+    = strcmp(fSDPMediaTypeString, "video") == 0 && doNormalMBitRule;
 }
 
 SimpleRTPSink::~SimpleRTPSink() {
@@ -79,8 +80,8 @@ void SimpleRTPSink::doSpecialFrameHandling(unsigned fragmentationOffset,
 }
 
 Boolean SimpleRTPSink::
-frameCanAppearAfterPacketStart(unsigned char const* frameStart,
-			       unsigned numBytesInFrame) const {
+frameCanAppearAfterPacketStart(unsigned char const* /*frameStart*/,
+			       unsigned /*numBytesInFrame*/) const {
   return fAllowMultipleFramesPerPacket;
 }
 

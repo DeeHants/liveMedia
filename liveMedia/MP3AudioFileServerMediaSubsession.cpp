@@ -28,23 +28,78 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 
 MP3AudioFileServerMediaSubsession* MP3AudioFileServerMediaSubsession
 ::createNew(UsageEnvironment& env, char const* fileName, Boolean reuseFirstSource,
-	    Boolean useADUs, Interleaving* interleaving) {
+	    Boolean generateADUs, Interleaving* interleaving) {
   return new MP3AudioFileServerMediaSubsession(env, fileName, reuseFirstSource,
-					       useADUs, interleaving);
+					       generateADUs, interleaving);
 }
 
 MP3AudioFileServerMediaSubsession
 ::MP3AudioFileServerMediaSubsession(UsageEnvironment& env,
 				    char const* fileName, Boolean reuseFirstSource,
-				    Boolean useADUs,
+				    Boolean generateADUs,
 				    Interleaving* interleaving)
   : FileServerMediaSubsession(env, fileName, reuseFirstSource),
-    fUseADUs(useADUs), fInterleaving(interleaving) {
+    fGenerateADUs(generateADUs), fInterleaving(interleaving), fFileDuration(0.0) {
 }
 
 MP3AudioFileServerMediaSubsession
 ::~MP3AudioFileServerMediaSubsession() {
   delete fInterleaving;
+}
+
+void MP3AudioFileServerMediaSubsession
+::seekStreamSource(FramedSource* inputSource, float seekNPT) {
+  MP3FileSource* mp3Source;
+  if (fGenerateADUs) {
+    // "inputSource" is a filter; use its input source instead.
+    ADUFromMP3Source* filter;
+    if (fInterleaving != NULL) {
+      // There's another filter as well.
+      filter = (ADUFromMP3Source*)(((FramedFilter*)inputSource)->inputSource());
+    } else {
+      filter = (ADUFromMP3Source*)inputSource;
+    }
+    filter->resetInput(); // because we're about to seek within its source
+    mp3Source = (MP3FileSource*)(filter->inputSource());
+  } else if (fFileDuration > 0.0) {
+    // There are a pair of filters - MP3->ADU and ADU->MP3 - in front of the
+    // original MP3 source:
+    MP3FromADUSource* filter2 = (MP3FromADUSource*)inputSource;
+    ADUFromMP3Source* filter1 = (ADUFromMP3Source*)(filter2->inputSource());
+    filter1->resetInput(); // because we're about to seek within its source
+    mp3Source = (MP3FileSource*)(filter1->inputSource());
+  } else {
+    // "inputSource" is the original MP3 source:
+    mp3Source = (MP3FileSource*)inputSource;
+  }
+
+  mp3Source->seekWithinFile(seekNPT);
+}
+
+void MP3AudioFileServerMediaSubsession
+::setStreamSourceScale(FramedSource* inputSource, float scale) {
+  int iScale = (int)scale;
+  MP3FileSource* mp3Source;
+  ADUFromMP3Source* aduSource = NULL;
+  if (fGenerateADUs) {
+    if (fInterleaving != NULL) {
+      // There's an interleaving filter in front.
+      aduSource = (ADUFromMP3Source*)(((FramedFilter*)inputSource)->inputSource());
+    } else {
+      aduSource = (ADUFromMP3Source*)inputSource;
+    }
+    mp3Source = (MP3FileSource*)(aduSource->inputSource());
+  } else if (fFileDuration > 0.0) {
+    // There are a pair of filters - MP3->ADU and ADU->MP3 - in front of the
+    // original MP3 source.  So, go back one, to reach the ADU source:
+    aduSource = (ADUFromMP3Source*)(((FramedFilter*)inputSource)->inputSource());
+
+    // Then, go back one more, to reach the MP3 source:
+    mp3Source = (MP3FileSource*)(aduSource->inputSource());
+  } else return; // the stream is not scalable
+
+  aduSource->setScaleFactor(iScale);
+  mp3Source->setPresentationTimeScale(iScale);
 }
 
 FramedSource* MP3AudioFileServerMediaSubsession
@@ -53,10 +108,12 @@ FramedSource* MP3AudioFileServerMediaSubsession
 
   FramedSource* streamSource;
   do {
-    streamSource = MP3FileSource::createNew(envir(), fFileName);
+    MP3FileSource* mp3Source;
+    streamSource = mp3Source = MP3FileSource::createNew(envir(), fFileName);
     if (streamSource == NULL) break;
+    fFileDuration = mp3Source->filePlayTime();
 
-    if (fUseADUs) {
+    if (fGenerateADUs) {
       // Add a filter that converts the source MP3s to ADUs:
       streamSource = ADUFromMP3Source::createNew(envir(), streamSource);
       if (streamSource == NULL) break;
@@ -67,6 +124,16 @@ FramedSource* MP3AudioFileServerMediaSubsession
 						    streamSource);
 	if (streamSource == NULL) break;
       }
+    } else if (fFileDuration > 0.0) {
+      // Because this is a seekable file, insert a pair of filters: one that
+      // converts the input MP3 stream to ADUs; another that converts these
+      // ADUs back to MP3.  This allows us to seek within the input stream without
+      // tripping over the MP3 'bit reservoir':
+      streamSource = ADUFromMP3Source::createNew(envir(), streamSource);
+      if (streamSource == NULL) break;
+
+      streamSource = MP3FromADUSource::createNew(envir(), streamSource);
+      if (streamSource == NULL) break;
     }
   } while (0);
 
@@ -77,10 +144,27 @@ RTPSink* MP3AudioFileServerMediaSubsession
 ::createNewRTPSink(Groupsock* rtpGroupsock,
 		   unsigned char rtpPayloadTypeIfDynamic,
 		   FramedSource* /*inputSource*/) {
-  if (fUseADUs) {
+  if (fGenerateADUs) {
     return MP3ADURTPSink::createNew(envir(), rtpGroupsock,
 				    rtpPayloadTypeIfDynamic);
   } else {
     return MPEG1or2AudioRTPSink::createNew(envir(), rtpGroupsock);
   }
+}
+
+void MP3AudioFileServerMediaSubsession::testScaleFactor(float& scale) {
+  if (fFileDuration <= 0.0) {
+    // The file is non-seekable, so is probably a live input source.
+    // We don't support scale factors other than 1
+    scale = 1;
+  } else {
+    // We support any integral scale >= 1
+    int iScale = (int)(scale + 0.5); // round
+    if (iScale < 1) iScale = 1;
+    scale = (float)iScale;
+  }
+}
+
+float MP3AudioFileServerMediaSubsession::duration() const {
+  return fFileDuration;
 }

@@ -35,7 +35,7 @@ protected: // we're a virtual base class
   virtual ~OnDemandServerMediaSubsession();
 
 private: // redefined virtual functions
-  virtual char const* sdpLines();
+  virtual char const* sdpLines(ServerMediaSession& parentSession);
   virtual void getStreamParameters(unsigned clientSessionId,
 				   netAddressBits clientAddress,
                                    Port const& clientRTPPort,
@@ -49,15 +49,21 @@ private: // redefined virtual functions
                                    Port& serverRTPPort,
                                    Port& serverRTCPPort,
                                    void*& streamToken);
-  virtual void startStream(unsigned clientSessionId, void* streamToken);
+  virtual void startStream(unsigned clientSessionId, void* streamToken,
+			   unsigned short& rtpSeqNum,
+                           unsigned& rtpTimestamp);
   virtual void pauseStream(unsigned clientSessionId, void* streamToken);
+  virtual void seekStream(unsigned clientSessionId, void* streamToken, float seekNPT);
+  virtual void setStreamScale(unsigned clientSessionId, void* streamToken, float scale);
   virtual void deleteStream(unsigned clientSessionId, void*& streamToken);
 
-protected: // new virtual functions
+protected: // new virtual functions, possibly redefined by subclasses
   virtual char const* getAuxSDPLine(RTPSink* rtpSink,
 				    FramedSource* inputSource);
+  virtual void seekStreamSource(FramedSource* inputSource, float seekNPT);
+  virtual void setStreamSourceScale(FramedSource* inputSource, float scale);
 
-protected: // new virtual functions, defined by subclasses
+protected: // new virtual functions, defined by all subclasses
   virtual FramedSource* createNewStreamSource(unsigned clientSessionId,
 					      unsigned& estBitrate) = 0;
       // "estBitrate" is the stream's estimated bitrate, in kbps
@@ -66,7 +72,8 @@ protected: // new virtual functions, defined by subclasses
 				    FramedSource* inputSource) = 0;
 
 private:
-  void setSDPLinesFromRTPSink(RTPSink* rtpSink, FramedSource* inputSource);
+  void setSDPLinesFromRTPSink(RTPSink* rtpSink, FramedSource* inputSource,
+			      ServerMediaSession& parentSession);
       // used to implement "sdpLines()"
 
 private:

@@ -42,7 +42,7 @@ private:
 
 class JPEGBufferedPacketFactory: public BufferedPacketFactory {
 private: // redefined virtual functions
-  virtual BufferedPacket* createNew(MultiFramedRTPSource* ourSource);
+  virtual BufferedPacket* createNewPacket(MultiFramedRTPSource* ourSource);
 };
 
 
@@ -183,6 +183,7 @@ static void createJPEGHeader(unsigned char* buf, unsigned type,
 			     unsigned char const* qtables, unsigned qtlen,
 			     unsigned dri) {
   unsigned char *ptr = buf;
+  unsigned numQtables = qtlen > 64 ? 2 : 1;
 
   // MARKER_SOI:
   *ptr++ = 0xFF; *ptr++ = MARKER_SOI;
@@ -205,36 +206,40 @@ static void createJPEGHeader(unsigned char* buf, unsigned type,
   }
   
   // MARKER_DQT (luma):
+  unsigned tableSize = numQtables == 1 ? qtlen : qtlen/2;
   *ptr++ = 0xFF; *ptr++ = MARKER_DQT;
-  *ptr++ = 0x00; *ptr++ = qtlen/2 + 3; // size of chunk
+  *ptr++ = 0x00; *ptr++ = tableSize + 3; // size of chunk
   *ptr++ = 0x00; // precision(0), table id(0)
-  memcpy(ptr, qtables, qtlen / 2);
-  qtables += qtlen / 2;
-  ptr += qtlen / 2;
+  memcpy(ptr, qtables, tableSize);
+  qtables += tableSize;
+  ptr += tableSize;
   
-  // MARKER_DQT (chroma):
-  *ptr++ = 0xFF; *ptr++ = MARKER_DQT;
-  *ptr++ = 0x00; *ptr++ = qtlen/2 + 3; // size of chunk
-  *ptr++ = 0x01; // precision(0), table id(1)
-  memcpy(ptr, qtables, qtlen / 2);
-  qtables += qtlen / 2;
-  ptr += qtlen / 2;
+  if (numQtables > 1) {
+    unsigned tableSize = qtlen - qtlen/2;
+    // MARKER_DQT (chroma):
+    *ptr++ = 0xFF; *ptr++ = MARKER_DQT;
+    *ptr++ = 0x00; *ptr++ = tableSize + 3; // size of chunk
+    *ptr++ = 0x01; // precision(0), table id(1)
+    memcpy(ptr, qtables, tableSize);
+    qtables += tableSize;
+    ptr += tableSize;
+  }
   
   // MARKER_SOF0:
   *ptr++ = 0xFF; *ptr++ = MARKER_SOF0;
   *ptr++ = 0x00; *ptr++ = 0x11; // size of chunk
   *ptr++ = 0x08; // sample precision
   *ptr++ = (BYTE)(h >> 8);
-  *ptr++ = (BYTE)(h); // number of lines, multiple of 8
+  *ptr++ = (BYTE)(h); // number of lines (must be a multiple of 8)
   *ptr++ = (BYTE)(w >> 8);
-  *ptr++ = (BYTE)(w); // sample per line, multiple of 16
+  *ptr++ = (BYTE)(w); // number of columns (must be a multiple of 8)
   *ptr++ = 0x03; // number of components
   *ptr++ = 0x01; // id of component
   *ptr++ = type ? 0x22 : 0x21; // sampling ratio (h,v)
   *ptr++ = 0x00; // quant table id
   *ptr++ = 0x02; // id of component
   *ptr++ = 0x11; // sampling ratio (h,v)
-  *ptr++ = 0x01; // quant table id
+  *ptr++ = numQtables == 1 ? 0x00 : 0x01; // quant table id
   *ptr++ = 0x03; // id of component
   *ptr++ = 0x11; // sampling ratio (h,v)
   *ptr++ = 0x01; // quant table id
@@ -335,7 +340,9 @@ Boolean JPEGVideoRTPSource
   unsigned type = Type & 1;
   unsigned Q = (unsigned)headerStart[5];
   unsigned width = (unsigned)headerStart[6] * 8;
+  if (width == 0) width = 256*8; // special case
   unsigned height = (unsigned)headerStart[7] * 8;
+  if (height == 0) height = 256*8; // special case
 
   if (Type > 63) {
     // Restart Marker header present
@@ -423,7 +430,7 @@ Boolean JPEGVideoRTPSource
 }    
 
 char const* JPEGVideoRTPSource::MIMEtype() const {
-  return "video/jpeg";
+  return "video/JPEG";
 }
 
 ////////// JPEGBufferedPacket and JPEGBufferedPacketFactory implementation
@@ -451,6 +458,6 @@ unsigned JPEGBufferedPacket
 }
 
 BufferedPacket* JPEGBufferedPacketFactory
-::createNew(MultiFramedRTPSource* /*ourSource*/) {
+::createNewPacket(MultiFramedRTPSource* /*ourSource*/) {
   return new JPEGBufferedPacket;
 }

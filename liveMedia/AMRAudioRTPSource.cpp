@@ -185,14 +185,8 @@ private:
 };
 
 class AMRBufferedPacketFactory: public BufferedPacketFactory {
-public:
-  AMRBufferedPacketFactory(RawAMRRTPSource& ourSource);
-
 private: // redefined virtual functions
-  virtual BufferedPacket* createNew(MultiFramedRTPSource* ourSource);
-
-private:
-  RawAMRRTPSource& fOurSource;
+  virtual BufferedPacket* createNewPacket(MultiFramedRTPSource* ourSource);
 };
 
 
@@ -215,7 +209,7 @@ RawAMRRTPSource
 		  Boolean isInterleaved, Boolean CRCsArePresent)
   : MultiFramedRTPSource(env, RTPgs, rtpPayloadFormat,
 			 isWideband ? 16000 : 8000,
-                         new AMRBufferedPacketFactory(*this)),
+                         new AMRBufferedPacketFactory),
   fIsWideband(isWideband), fIsOctetAligned(isOctetAligned),
   fIsInterleaved(isInterleaved), fCRCsArePresent(CRCsArePresent),
   fILL(0), fILP(0), fTOCSize(0), fTOC(NULL), fFrameIndex(0),
@@ -317,7 +311,7 @@ Boolean RawAMRRTPSource
 } 
 
 char const* RawAMRRTPSource::MIMEtype() const {
-  return fIsWideband ? "audio/amr-wb" : "audio/amr";
+  return fIsWideband ? "audio/AMR-WB" : "audio/AMR-WB";
 }
 
 Boolean RawAMRRTPSource::hasBeenSynchronizedUsingRTCP() {
@@ -386,14 +380,9 @@ unsigned AMRBufferedPacket::
   return frameSize;
 }
 
-AMRBufferedPacketFactory
-::AMRBufferedPacketFactory(RawAMRRTPSource& ourSource)
-  : fOurSource(ourSource) {
-}
-
 BufferedPacket* AMRBufferedPacketFactory
-::createNew(MultiFramedRTPSource* ourSource) {
-  return new AMRBufferedPacket(fOurSource);
+::createNewPacket(MultiFramedRTPSource* ourSource) {
+  return new AMRBufferedPacket((RawAMRRTPSource&)(*ourSource));
 }
 
 ///////// AMRDeinterleavingBuffer /////////

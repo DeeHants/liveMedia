@@ -68,6 +68,7 @@ public:
 			      RTSPServer*& resultServer);
 
   void addServerMediaSession(ServerMediaSession* serverMediaSession);
+  void removeServerMediaSession(ServerMediaSession* serverMediaSession);
 
   char* rtspURL(ServerMediaSession const* serverMediaSession) const;
       // returns a "rtsp://" URL that could be used to access the
@@ -114,11 +115,11 @@ private:
 			 char const* fullRequestStr);
     void handleCmd_withinSession(char const* cmdName,
 				 char const* urlPreSuffix, char const* urlSuffix,
-				 char const* cseq);
+				 char const* cseq, char const* fullRequestStr);
     void handleCmd_TEARDOWN(ServerMediaSubsession* subsession,
 			    char const* cseq);
     void handleCmd_PLAY(ServerMediaSubsession* subsession,
-			char const* cseq);
+			char const* cseq, char const* fullRequestStr);
     void handleCmd_PAUSE(ServerMediaSubsession* subsession,
 			 char const* cseq);
     Boolean authenticationOK(char const* cmdName, char const* cseq,
@@ -142,6 +143,7 @@ private:
     unsigned char fBuffer[10000];
     Boolean fSessionIsActive;
     Authenticator fCurrentAuthenticator; // used if access control is needed
+    unsigned char fTCPStreamIdCount; // used for (optional) RTP/TCP
     unsigned fNumStreamStates; 
     struct streamState {
       ServerMediaSubsession* subsession;

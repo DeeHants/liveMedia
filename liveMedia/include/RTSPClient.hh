@@ -35,15 +35,20 @@ class RTSPClient: public Medium {
 public:
   static RTSPClient* createNew(UsageEnvironment& env,
 			       int verbosityLevel = 0,
-			       char const* applicationName = NULL);
+			       char const* applicationName = NULL,
+			       portNumBits tunnelOverHTTPPortNum = 0);
+  // If "tunnelOverHTTPPortNum" is non-zero, we tunnel RTSP (and RTP)
+  // over a HTTP connection with the given port number, using the technique
+  // described in Apple's document <http://developer.apple.com/documentation/QuickTime/QTSS/Concepts/chapter_2_section_14.html>
 
-  int socketNum() const { return fSocketNum; }
+  int socketNum() const { return fInputSocketNum; }
 
   static Boolean lookupByName(UsageEnvironment& env,
 			      char const* sourceName,
 			      RTSPClient*& resultClient);
 
-  char* describeURL(char const* url, Authenticator* authenticator = NULL);
+  char* describeURL(char const* url, Authenticator* authenticator = NULL,
+		    Boolean allowKasennaProtocol = False);
       // Issues a RTSP "DESCRIBE" command
       // Returns the SDP description of a session, or NULL if none
       // (This is dynamically allocated, and must later be freed
@@ -76,12 +81,14 @@ public:
       // Returns True iff this command succeeds
 
   Boolean playMediaSession(MediaSession& session,
-			   float start = 0.0, float end = -1.0);
+			   float start = 0.0f, float end = -1.0f,
+			   float scale = 1.0f);
       // Issues an aggregate RTSP "PLAY" command on "session".
       // Returns True iff this command succeeds
       // (Note: start=-1 means 'resume'; end=-1 means 'play to end')
   Boolean playMediaSubsession(MediaSubsession& subsession,
-			      float start = 0.0, float end = -1.0,
+			      float start = 0.0f, float end = -1.0f,
+			      float scale = 1.0f,
 			      Boolean hackForDSS = False);
       // Issues a RTSP "PLAY" command on "subsession".
       // Returns True iff this command succeeds
@@ -112,7 +119,8 @@ public:
       // Returns True iff this command succeeds
 
   static Boolean parseRTSPURL(UsageEnvironment& env, char const* url,
-			      NetAddress& address, portNumBits& portNum);
+			      NetAddress& address, portNumBits& portNum,
+			      char const** urlSuffix = NULL);
       // (ignores any "<username>[:<password>]@" in "url")
   static Boolean parseRTSPURLUsernamePassword(char const* url,
 					      char*& username,
@@ -121,7 +129,7 @@ public:
   unsigned describeStatus() const { return fDescribeStatusCode; }
 
 #ifdef SUPPORT_REAL_RTSP
-  Boolean isRealNetworksSession() const { return fRealChallengeStr != NULL; }
+  Boolean usingRealNetworksChallengeResponse() const { return fRealChallengeStr != NULL; }
 #endif
 
 protected:
@@ -132,10 +140,11 @@ private: // redefined virtual functions
 
 private:
   RTSPClient(UsageEnvironment& env, int verbosityLevel,
-	     char const* applicationName);
+	     char const* applicationName, portNumBits tunnelOverHTTPPortNum);
       // called only by createNew();
 
   void reset();
+  void resetTCPSockets();
 
   Boolean openConnectionFromURL(char const* url);
   char* createAuthenticatorString(Authenticator const* authenticator,
@@ -143,8 +152,13 @@ private:
   static void checkForAuthenticationFailure(unsigned responseCode,
 					    char*& nextLineStart,
 					    Authenticator* authenticator);
-  Boolean sendRequest(char const* requestString);
-  unsigned getResponse(char*& responseBuffer, unsigned responseBufferSize);
+  Boolean sendRequest(char const* requestString, char const* tag,
+		      Boolean base64EncodeIfOverHTTP = True);
+  Boolean getResponse(char const* tag,
+		      unsigned& bytesRead, unsigned& responseCode,
+		      char*& firstLine, char*& nextLineStart,
+		      Boolean checkFor200Response = True);
+  unsigned getResponse1(char*& responseBuffer, unsigned responseBufferSize);
   Boolean parseResponseCode(char const* line, unsigned& responseCode);
   Boolean parseTransportResponse(char const* line,
 				 char*& serverAddressStr,
@@ -153,16 +167,19 @@ private:
 				 unsigned char& rtcpChannelId);
   Boolean parseRTPInfoHeader(char const* line, unsigned& trackId,
 			     u_int16_t& seqNum, u_int32_t& timestamp);
+  Boolean parseScaleHeader(char const* line, float& scale);
   void constructSubsessionURL(MediaSubsession const& subsession,
 			      char const*& prefix,
 			      char const*& separator,
 			      char const*& suffix);
+  Boolean setupHTTPTunneling(char const* urlSuffix);
 
 private:
   int fVerbosityLevel;
+  portNumBits fTunnelOverHTTPPortNum;
   char* fUserAgentHeaderStr;
       unsigned fUserAgentHeaderStrSize;
-  int fSocketNum;
+  int fInputSocketNum, fOutputSocketNum;
   unsigned fServerAddress;
   static unsigned fCSeq; // sequence number, used in consecutive requests
       // Note: it's static, to ensure that it differs if more than one
@@ -178,6 +195,12 @@ private:
 #endif
   unsigned fDescribeStatusCode;
   // 0: OK; 1: connection failed; 2: stream unavailable
+  char* fResponseBuffer;
+  unsigned fResponseBufferSize;
+
+  // The following fields are used to implement the non-standard Kasenna protocol:
+  Boolean fServerIsKasenna;
+  char* fKasennaContentType;
 };
 
 #endif

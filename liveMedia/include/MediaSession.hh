@@ -45,9 +45,8 @@ public:
   float& playEndTime() { return fMaxPlayEndTime; }
   char* connectionEndpointName() const { return fConnectionEndpointName; }
   char const* CNAME() const { return fCNAME; }
-  struct in_addr const& sourceFilterAddr() const {
-    return fSourceFilterAddr;
-  }
+  struct in_addr const& sourceFilterAddr() const { return fSourceFilterAddr; }
+  float& scale() { return fScale; }
 
   Boolean initiateByMediaType(char const* mimeType,
 			      MediaSubsession*& resultSubsession,
@@ -60,6 +59,7 @@ public:
 
 #ifdef SUPPORT_REAL_RTSP
   // Attributes specific to RealNetworks streams:
+  Boolean isRealNetworksRDT;
   unsigned fRealFlags;
   unsigned char* fRealTitle; unsigned fRealTitleSize;
   unsigned char* fRealAuthor; unsigned fRealAuthorSize;
@@ -99,6 +99,7 @@ private:
   char* fConnectionEndpointName;
   float fMaxPlayEndTime;
   struct in_addr fSourceFilterAddr; // used for SSM
+  float fScale; // set from a RTSP "Scale:" header
 };
 
 
@@ -122,9 +123,11 @@ public:
   MediaSession const& parentSession() const { return fParent; }
 
   unsigned short clientPortNum() const { return fClientPortNum; }
+  unsigned char rtpPayloadFormat() const { return fRTPPayloadFormat; }
   char const* savedSDPLines() const { return fSavedSDPLines; }
   char const* mediumName() const { return fMediumName; }
   char const* codecName() const { return fCodecName; }
+  char const* protocolName() const { return fProtocolName; }
   char const* controlPath() const { return fControlPath; }
   Boolean isSSM() const { return fSourceFilterAddr.s_addr != 0; }
 
@@ -134,6 +137,7 @@ public:
   unsigned short videoHeight() const { return fVideoHeight; }
   unsigned videoFPS() const { return fVideoFPS; }
   unsigned numChannels() const { return fNumChannels; }
+  float& scale() { return fScale; }
 
   RTPSource* rtpSource() { return fRTPSource; }
   RTCPInstance* rtcpInstance() { return fRTCPInstance; }
@@ -248,6 +252,7 @@ private:
   char* fSavedSDPLines;
   char* fMediumName;
   char* fCodecName;
+  char* fProtocolName;
   unsigned fRTPTimestampFrequency;
   char* fControlPath;
   struct in_addr fSourceFilterAddr; // used for SSM
@@ -271,6 +276,7 @@ private:
      // frame rate (set by an optional a=x-framerate: <fps> line)
   unsigned fNumChannels;
      // optionally set by "a=rtpmap:" lines for audio sessions.  Default: 1
+  float fScale; // set from a RTSP "Scale:" header
 
   // Fields set by initiate():
   Groupsock* fRTPSocket; Groupsock* fRTCPSocket; // works even for unicast

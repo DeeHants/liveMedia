@@ -68,8 +68,7 @@ Boolean H263plusVideoRTPSource
     if (packetSize < expectedHeaderSize) return False;
   }
 
-  fCurrentPacketBeginsFrame = fCurrentPacketCompletesFrame;
-          // whether the *previous* packet ended a frame
+  fCurrentPacketBeginsFrame = P;
   if (fCurrentPacketBeginsFrame) {
     fNumSpecialHeaders = fSpecialHeaderBytesLength = 0;
   }
@@ -102,5 +101,5 @@ Boolean H263plusVideoRTPSource
 }
 
 char const* H263plusVideoRTPSource::MIMEtype() const {
-  return "video/h263-1998";
+  return "video/H263-1998";
 }

@@ -32,6 +32,10 @@ public:
   static WAVAudioFileSource* createNew(UsageEnvironment& env,
 					char const* fileName);
 
+  unsigned numPCMBytes() const;
+  void setScaleFactor(int scale);
+  void seekToPCMByte(unsigned byteNumber);
+
 protected:
   WAVAudioFileSource(UsageEnvironment& env, FILE* fid);
 	// called only by createNew()
@@ -49,6 +53,9 @@ private:
   double fPlayTimePerSample; // useconds
   unsigned fPreferredFrameSize;
   unsigned fLastPlayTime; // useconds
+  unsigned fWAVHeaderSize;
+  unsigned fFileSize;
+  int fScaleFactor;
 };
 
 #endif

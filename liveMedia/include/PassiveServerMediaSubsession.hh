@@ -44,7 +44,7 @@ private:
   virtual ~PassiveServerMediaSubsession();
 
 private: // redefined virtual functions
-  virtual char const* sdpLines();
+  virtual char const* sdpLines(ServerMediaSession& parentSession);
   virtual void getStreamParameters(unsigned clientSessionId,
 				   netAddressBits clientAddress,
                                    Port const& clientRTPPort,
@@ -58,6 +58,9 @@ private: // redefined virtual functions
                                    Port& serverRTPPort,
                                    Port& serverRTCPPort,
                                    void*& streamToken);
+  virtual void startStream(unsigned clientSessionId, void* streamToken,
+                           unsigned short& rtpSeqNum,
+                           unsigned& rtpTimestamp);
 
 private:
   RTPSink& fRTPSink;

@@ -21,7 +21,9 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 
 Medium* createClient(UsageEnvironment& env,
                      int verbosityLevel, char const* applicationName) {
-  return RTSPClient::createNew(env, verbosityLevel, applicationName);
+  extern portNumBits tunnelOverHTTPPortNum;
+  return RTSPClient::createNew(env, verbosityLevel, applicationName,
+			       tunnelOverHTTPPortNum);
 }
 
 char* getOptionsResponse(Medium* client, char const* url) {
@@ -44,10 +46,6 @@ char* getSDPDescriptionFromURL(Medium* client, char const* url,
 
   extern unsigned statusCode;
   statusCode = rtspClient->describeStatus();
-#ifdef SUPPORT_REAL_RTSP
-  extern Boolean isRealNetworksSession;
-  isRealNetworksSession = rtspClient->isRealNetworksSession();
-#endif
   return result;
 }
 

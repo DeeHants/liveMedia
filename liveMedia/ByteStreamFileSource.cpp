@@ -24,54 +24,35 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #endif
 
 #include "ByteStreamFileSource.hh"
+#include "InputFile.hh"
 #include "GroupsockHelper.hh"
 
 ////////// ByteStreamFileSource //////////
-
-ByteStreamFileSource::ByteStreamFileSource(UsageEnvironment& env, FILE* fid,
-					   unsigned preferredFrameSize,
-					   unsigned playTimePerFrame)
-  : FramedFileSource(env, fid), fPreferredFrameSize(preferredFrameSize),
-    fPlayTimePerFrame(playTimePerFrame), fLastPlayTime(0) {
-}
-
-ByteStreamFileSource::~ByteStreamFileSource() {
-  fclose(fFid);
-}
 
 ByteStreamFileSource*
 ByteStreamFileSource::createNew(UsageEnvironment& env, char const* fileName,
 				unsigned preferredFrameSize,
 				unsigned playTimePerFrame) {
-  do {
-    FILE* fid;
+  FILE* fid = OpenInputFile(env, fileName);
+  if (fid == NULL) return NULL;
 
-    // Check for a special case file name: "stdin"
-    if (strcmp(fileName, "stdin") == 0) {
-      fid = stdin;
-#if defined(__WIN32__) || defined(_WIN32)
-      _setmode(_fileno(stdin), _O_BINARY); // convert to binary mode
-#endif
-    } else { 
-     fid = fopen(fileName, "rb");
-      if (fid == NULL) {
-	env.setResultMsg("unable to open file \"",fileName, "\"");
-	break;
-      }
-    }
+  ByteStreamFileSource* newSource
+    = new ByteStreamFileSource(env, fid, preferredFrameSize, playTimePerFrame);
+  newSource->fFileSize = GetFileSize(fileName, fid);
 
-    return new ByteStreamFileSource(env, fid, preferredFrameSize,
-				    playTimePerFrame);
-  } while (0);
-
-  return NULL;
+  return newSource;
 }
 
-#ifdef BSD
-static struct timezone Idunno;
-#else
-static int Idunno;
-#endif
+ByteStreamFileSource::ByteStreamFileSource(UsageEnvironment& env, FILE* fid,
+					   unsigned preferredFrameSize,
+					   unsigned playTimePerFrame)
+  : FramedFileSource(env, fid), fPreferredFrameSize(preferredFrameSize),
+    fPlayTimePerFrame(playTimePerFrame), fLastPlayTime(0), fFileSize(0) {
+}
+
+ByteStreamFileSource::~ByteStreamFileSource() {
+  CloseInputFile(fFid);
+}
 
 void ByteStreamFileSource::doGetNextFrame() {
   if (feof(fFid) || ferror(fFid)) {
@@ -90,7 +71,7 @@ void ByteStreamFileSource::doGetNextFrame() {
   if (fPlayTimePerFrame > 0 && fPreferredFrameSize > 0) {
     if (fPresentationTime.tv_sec == 0 && fPresentationTime.tv_usec == 0) {
       // This is the first frame, so use the current time:
-      gettimeofday(&fPresentationTime, &Idunno);
+      gettimeofday(&fPresentationTime, NULL);
     } else {
       // Increment by the play time of the previous data:
       unsigned uSeconds	= fPresentationTime.tv_usec + fLastPlayTime;
@@ -104,7 +85,7 @@ void ByteStreamFileSource::doGetNextFrame() {
   } else {
     // We don't know a specific play time duration for this data,
     // so just record the current time as being the 'presentation time':
-    gettimeofday(&fPresentationTime, &Idunno);
+    gettimeofday(&fPresentationTime, NULL);
   }
 
   // Switch to another task, and inform the reader that he has data:

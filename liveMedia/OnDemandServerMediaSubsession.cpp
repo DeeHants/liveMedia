@@ -65,10 +65,11 @@ OnDemandServerMediaSubsession::~OnDemandServerMediaSubsession() {
     if (destinations == NULL) break;
     delete destinations;
   }
-  delete[] fDestinationsHashTable;
+  delete fDestinationsHashTable;
 }
 
-char const* OnDemandServerMediaSubsession::sdpLines() {
+char const*
+OnDemandServerMediaSubsession::sdpLines(ServerMediaSession& parentSession) {
   if (fSDPLines == NULL) {
     // We need to construct a set of SDP lines that describe this
     // subsession (as a unicast stream).  To do so, we first create
@@ -85,7 +86,7 @@ char const* OnDemandServerMediaSubsession::sdpLines() {
     RTPSink* dummyRTPSink
       = createNewRTPSink(&dummyGroupsock, rtpPayloadType, inputSource);
 
-    setSDPLinesFromRTPSink(dummyRTPSink, inputSource);
+    setSDPLinesFromRTPSink(dummyRTPSink, inputSource, parentSession);
     Medium::close(dummyRTPSink);
     Medium::close(inputSource);
   }
@@ -113,7 +114,12 @@ public:
   Port const& serverRTPPort() const { return fServerRTPPort; }
   Port const& serverRTCPPort() const { return fServerRTCPPort; }
 
+  RTPSink const* rtpSink() const { return fRTPSink; }
+
+  FramedSource* mediaSource() const { return fMediaSource; }
+
 private:
+  Boolean fAreCurrentlyPlaying;
   unsigned fReferenceCount;
 
   Port fServerRTPPort, fServerRTCPPort;
@@ -136,7 +142,7 @@ void OnDemandServerMediaSubsession
 		      unsigned char rtpChannelId,
 		      unsigned char rtcpChannelId,
 		      netAddressBits& destinationAddress,
-		      u_int8_t& destinationTTL,
+		      u_int8_t& /*destinationTTL*/,
 		      Boolean& isMulticast,
 		      Port& serverRTPPort,
 		      Port& serverRTCPPort,
@@ -212,11 +218,19 @@ void OnDemandServerMediaSubsession
 }
 
 void OnDemandServerMediaSubsession::startStream(unsigned clientSessionId,
-						void* streamToken) {
+						void* streamToken,
+						unsigned short& rtpSeqNum,
+						unsigned& rtpTimestamp) {
   StreamState* streamState = (StreamState*)streamToken; 
   Destinations* destinations
     = (Destinations*)(fDestinationsHashTable->Lookup((char const*)clientSessionId));
-  if (streamState != NULL) streamState->startPlaying(destinations);
+  if (streamState != NULL) {
+    streamState->startPlaying(destinations);
+    if (streamState->rtpSink() != NULL) {
+      rtpSeqNum = streamState->rtpSink()->currentSeqNo();
+      rtpTimestamp = streamState->rtpSink()->currentTimestamp();
+    }
+  }
 }
 
 void OnDemandServerMediaSubsession::pauseStream(unsigned /*clientSessionId*/,
@@ -227,6 +241,30 @@ void OnDemandServerMediaSubsession::pauseStream(unsigned /*clientSessionId*/,
 
   StreamState* streamState = (StreamState*)streamToken; 
   if (streamState != NULL) streamState->pause();
+}
+
+void OnDemandServerMediaSubsession::seekStream(unsigned /*clientSessionId*/,
+					       void* streamToken, float seekNPT) {
+  // Seeking isn't allowed if multiple clients are receiving data from
+  // the same source:
+  if (fReuseFirstSource) return;
+
+  StreamState* streamState = (StreamState*)streamToken; 
+  if (streamState != NULL && streamState->mediaSource() != NULL) {
+    seekStreamSource(streamState->mediaSource(), seekNPT);
+  }
+}
+
+void OnDemandServerMediaSubsession::setStreamScale(unsigned /*clientSessionId*/,
+						   void* streamToken, float scale) {
+  // Changing the scale factor isn't allowed if multiple clients are receiving data
+  // from the same source:
+  if (fReuseFirstSource) return;
+
+  StreamState* streamState = (StreamState*)streamToken; 
+  if (streamState != NULL && streamState->mediaSource() != NULL) {
+    setStreamSourceScale(streamState->mediaSource(), scale);
+  }
 }
 
 void OnDemandServerMediaSubsession::deleteStream(unsigned clientSessionId,
@@ -262,60 +300,50 @@ char const* OnDemandServerMediaSubsession
   return rtpSink->auxSDPLine();
 }
 
+void OnDemandServerMediaSubsession::seekStreamSource(FramedSource* /*inputSource*/,
+						     float /*seekNPT*/) {
+  // Default implementation: Do nothing
+}
+
 void OnDemandServerMediaSubsession
-::setSDPLinesFromRTPSink(RTPSink* rtpSink, FramedSource* inputSource) {
+::setStreamSourceScale(FramedSource* /*inputSource*/, float /*scale*/) {
+  // Default implementation: Do nothing
+}
+
+void OnDemandServerMediaSubsession
+::setSDPLinesFromRTPSink(RTPSink* rtpSink, FramedSource* inputSource,
+			 ServerMediaSession& parentSession) {
   if (rtpSink == NULL) return;
 
   char const* mediaType = rtpSink->sdpMediaType();
   unsigned char rtpPayloadType = rtpSink->rtpPayloadType();
-  char const* rtpPayloadFormatName = rtpSink->rtpPayloadFormatName();
-  unsigned rtpTimestampFrequency = rtpSink->rtpTimestampFrequency();
-  unsigned numChannels = rtpSink->numChannels();
-  char* rtpmapLine;
-  if (rtpPayloadType >= 96) {
-    char* encodingParamsPart;
-    if (numChannels != 1) {
-      encodingParamsPart = new char[1 + 20 /* max int len */];
-      sprintf(encodingParamsPart, "/%d", numChannels);
-    } else {
-      encodingParamsPart = strDup("");
-    }
-    char const* const rtpmapFmt = "a=rtpmap:%d %s/%d%s\r\n";
-    unsigned rtpmapFmtSize = strlen(rtpmapFmt)
-      + 3 /* max char len */ + strlen(rtpPayloadFormatName)
-      + 20 /* max int len */ + strlen(encodingParamsPart);
-    rtpmapLine = new char[rtpmapFmtSize];
-    sprintf(rtpmapLine, rtpmapFmt,
-	    rtpPayloadType, rtpPayloadFormatName,
-	    rtpTimestampFrequency, encodingParamsPart);
-    delete[] encodingParamsPart;
-  } else {
-    // Static payload type => no "a=rtpmap:" line
-    rtpmapLine = strDup("");
-  }
-  unsigned rtpmapLineSize = strlen(rtpmapLine);
+  char* rtpmapLine = rtpSink->rtpmapLine();
+  char const* rangeLine = rangeSDPLine(parentSession);
   char const* auxSDPLine = getAuxSDPLine(rtpSink, inputSource);
   if (auxSDPLine == NULL) auxSDPLine = "";
-  unsigned auxSDPLineSize = strlen(auxSDPLine);
   
   char const* const sdpFmt =
     "m=%s 0 RTP/AVP %d\r\n"
     "c=IN IP4 0.0.0.0\r\n"
     "%s"
     "%s"
+    "%s"
     "a=control:%s\r\n";
   unsigned sdpFmtSize = strlen(sdpFmt)
     + strlen(mediaType) + 3 /* max char len */
-    + rtpmapLineSize
-    + auxSDPLineSize
+    + strlen(rtpmapLine)
+    + strlen(rangeLine)
+    + strlen(auxSDPLine)
     + strlen(trackId());
   char* sdpLines = new char[sdpFmtSize];
   sprintf(sdpLines, sdpFmt,
 	  mediaType, // m= <media>
 	  rtpPayloadType, // m= <fmt list>
 	  rtpmapLine, // a=rtpmap:... (if present)
+	  rangeLine, // a=range:... (if present)
 	  auxSDPLine, // optional extra SDP line
 	  trackId()); // a=control:<track-id>
+  delete[] rtpmapLine;
   
   fSDPLines = strDup(sdpLines);
   delete[] sdpLines;
@@ -325,8 +353,13 @@ void OnDemandServerMediaSubsession
 ////////// StreamState implementation //////////
 
 static void afterPlayingStreamState(void* clientData) {
+  // When the input stream ends, keep it alive, in case the client wants to
+  // subsequently re-play the stream starting from somewhere other than the end.
+  // If, instead, you want to terminate the stream, enable the following code.
+#if 0
   StreamState* streamState = (StreamState*)clientData;
   streamState->reclaim();
+#endif
 }
 
 StreamState::StreamState(Port const& serverRTPPort, Port const& serverRTCPPort,
@@ -334,7 +367,7 @@ StreamState::StreamState(Port const& serverRTPPort, Port const& serverRTCPPort,
 			 unsigned totalBW, char* CNAME,
 			 FramedSource* mediaSource,
 			 Groupsock* rtpGS, Groupsock* rtcpGS)
-  : fReferenceCount(1),
+  : fAreCurrentlyPlaying(False), fReferenceCount(1),
     fServerRTPPort(serverRTPPort), fServerRTCPPort(serverRTCPPort),
     fRTPSink(rtpSink),
     fTotalBW(totalBW), fCNAME(CNAME), fRTCPInstance(NULL) /* created later */,
@@ -347,9 +380,9 @@ StreamState::~StreamState() {
 
 void StreamState::startPlaying(Destinations* dests) {
   if (dests == NULL) return;
-  if (fRTCPInstance == NULL // we're being called for the first time
-      && fRTPSink != NULL && fMediaSource != NULL) {
+  if (!fAreCurrentlyPlaying && fRTPSink != NULL && fMediaSource != NULL) {
     fRTPSink->startPlaying(*fMediaSource, afterPlayingStreamState, this);
+    fAreCurrentlyPlaying = True;
   }
 
   if (fRTCPInstance == NULL && fRTPSink != NULL) {
@@ -379,6 +412,7 @@ void StreamState::startPlaying(Destinations* dests) {
 
 void StreamState::pause() {
   if (fRTPSink != NULL) fRTPSink->stopPlaying();
+  fAreCurrentlyPlaying = False;
 }
 
 void StreamState::endPlaying(Destinations* dests) {

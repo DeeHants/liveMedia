@@ -15,20 +15,17 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 **********/
 // "liveMedia"
 // Copyright (c) 1996-2004 Live Networks, Inc.  All rights reserved.
-// A 'ServerMediaSubsession' object that creates new, unicast, "RTPSink"s
-// on demand, from a file.
-// Implementation
+// Common routines for opening/closing named output files
+// C++ header
 
-#include "FileServerMediaSubsession.hh"
+#ifndef _OUTPUT_FILE_HH
+#define _OUTPUT_FILE_HH
 
-FileServerMediaSubsession
-::FileServerMediaSubsession(UsageEnvironment& env, char const* fileName,
-			    Boolean reuseFirstSource)
-  : OnDemandServerMediaSubsession(env, reuseFirstSource),
-    fFileSize(0) {
-  fFileName = strDup(fileName);
-}
+#include <UsageEnvironment.hh>
+#include <stdio.h>
 
-FileServerMediaSubsession::~FileServerMediaSubsession() {
-  delete[] (char*)fFileName;
-}
+FILE* OpenOutputFile(UsageEnvironment& env, char const* fileName);
+
+void CloseOutputFile(FILE* fid);
+
+#endif

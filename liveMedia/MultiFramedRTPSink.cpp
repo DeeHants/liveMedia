@@ -24,10 +24,19 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 
 ////////// MultiFramedRTPSink //////////
 
-static unsigned const maxPacketSize = 1448;
+static unsigned _maxPacketSize = 1448;
 	// bytes (1500, minus some allowance for IP, UDP, UMTP headers)
         // (Also, make it a multiple of 4 bytes, just in case that matters.)
-static unsigned const preferredPacketSize = 1000; // bytes
+static unsigned _preferredPacketSize = 1000; // bytes
+
+void MultiFramedRTPSink::setPacketSizes(unsigned preferredPacketSize,
+					unsigned maxPacketSize) {
+  if (preferredPacketSize > maxPacketSize || preferredPacketSize == 0) return;
+      // sanity check
+
+  _preferredPacketSize = preferredPacketSize;
+  _maxPacketSize = maxPacketSize; 
+}
 
 MultiFramedRTPSink::MultiFramedRTPSink(UsageEnvironment& env,
 				       Groupsock* rtpGS,
@@ -38,7 +47,7 @@ MultiFramedRTPSink::MultiFramedRTPSink(UsageEnvironment& env,
   : RTPSink(env, rtpGS, rtpPayloadType, rtpTimestampFrequency,
 	    rtpPayloadFormatName, numChannels),
     fCurFragmentationOffset(0), fPreviousFrameEndedFragmentation(False) {
-  fOutBuf = new OutPacketBuffer(preferredPacketSize, maxPacketSize);
+  fOutBuf = new OutPacketBuffer(_preferredPacketSize, _maxPacketSize);
 }
 
 MultiFramedRTPSink::~MultiFramedRTPSink() {
@@ -85,7 +94,8 @@ void MultiFramedRTPSink::setMarkerBit() {
 
 void MultiFramedRTPSink::setTimestamp(struct timeval timestamp) {
   // First, convert the timestamp to a 32-bit RTP timestamp:
-  fCurrentTimestamp = convertToRTPTimestamp(timestamp);
+  fCurrentTimestamp
+    = convertToRTPTimestamp(timestamp, isFirstPacket() && isFirstFrameInPacket());
 
   // Then, insert it into the RTP packet:
   fOutBuf->insertWord(fCurrentTimestamp, fTimestampPosition);
@@ -102,16 +112,7 @@ void MultiFramedRTPSink::setSpecialHeaderBytes(unsigned char const* bytes,
   fOutBuf->insert(bytes, numBytes, fSpecialHeaderPosition + bytePosition);
 }
 
-#ifdef BSD
-static struct timezone Idunno;
-#else
-static int Idunno;
-#endif
-
 Boolean MultiFramedRTPSink::continuePlaying() {
-  // Record the fact that we're starting to play now:
-  gettimeofday(&fNextSendTime, &Idunno);
-
   // Send the first packet.
   // (This will also schedule any future sends.)
   buildAndSendPacket(True);
@@ -189,16 +190,19 @@ void MultiFramedRTPSink
 ::afterGettingFrame1(unsigned frameSize, unsigned numTruncatedBytes,
 		     struct timeval presentationTime,
 		     unsigned durationInMicroseconds) {
+  if (fIsFirstPacket) {
+    // Record the fact that we're starting to play now:
+    gettimeofday(&fNextSendTime, NULL);
+  }
+
   if (numTruncatedBytes > 0) {
     unsigned const bufferSize = fOutBuf->totalBytesAvailable();
-    unsigned newNumPacketsLimit
-      = (frameSize + numTruncatedBytes + (maxPacketSize-1)) / maxPacketSize;
+    unsigned newMaxSize = frameSize + numTruncatedBytes;
     envir() << "MultiFramedRTPSink::afterGettingFrame1(): The input frame data was too large for our buffer size ("
 	    << bufferSize << ").  "
-	    << numTruncatedBytes << " bytes of trailing data was dropped!  Correct this by increasing \"OutPacketBuffer::numPacketsLimit\" to at least "
-	    << newNumPacketsLimit << ", *before* creating this 'RTPSink'.  (Current value is "
-	    << OutPacketBuffer::numPacketsLimit
-	    << ".)\n";
+	    << numTruncatedBytes << " bytes of trailing data was dropped!  Correct this by increasing \"OutPacketBuffer::maxSize\" to at least "
+	    << newMaxSize << ", *before* creating this 'RTPSink'.  (Current value is "
+	    << OutPacketBuffer::maxSize << ".)\n";
   }
   unsigned curFragmentationOffset = fCurFragmentationOffset;
   unsigned numFrameBytesToUse = frameSize;
@@ -339,7 +343,7 @@ void MultiFramedRTPSink::sendPacketIfNecessary() {
     // is due to start playing, then make sure that we wait this long before
     // sending the next packet.
     struct timeval timeNow;
-    gettimeofday(&timeNow, &Idunno);
+    gettimeofday(&timeNow, NULL);
     int uSecondsToGo;
     if (fNextSendTime.tv_sec < timeNow.tv_sec) {
       uSecondsToGo = 0; // prevents integer underflow if too far behind

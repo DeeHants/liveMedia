@@ -57,7 +57,10 @@ TaskToken interPacketGapCheckTimerTask = NULL;
 TaskToken qosMeasurementTimerTask = NULL;
 Boolean createReceivers = True;
 Boolean outputQuickTimeFile = False;
+Boolean generateMP4Format = False;
 QuickTimeFileSink* qtOut = NULL;
+Boolean outputAVIFile = False;
+AVIFileSink* aviOut = NULL;
 Boolean audioOnly = False;
 Boolean videoOnly = False;
 char const* singleMedium = NULL;
@@ -73,15 +76,19 @@ Boolean sendOptionsRequestOnly = False;
 Boolean oneFilePerFrame = False;
 Boolean notifyOnPacketArrival = False;
 Boolean streamUsingTCP = False;
+portNumBits tunnelOverHTTPPortNum = 0;
 char* username = NULL;
 char* password = NULL;
 char* proxyServerName = NULL;
 unsigned short proxyServerPortNum = 0;
 unsigned char desiredAudioRTPPayloadFormat = 0;
 char* mimeSubtype = NULL;
-unsigned short movieWidth = 240;
-unsigned short movieHeight = 180;
-unsigned movieFPS = 15;
+unsigned short movieWidth = 240; // default
+Boolean movieWidthOptionSet = False;
+unsigned short movieHeight = 180; // default
+Boolean movieHeightOptionSet = False;
+unsigned movieFPS = 15; // default
+Boolean movieFPSOptionSet = False;
 char* fileNamePrefix = "";
 unsigned fileSinkBufferSize = 20000;
 unsigned socketInputBufferSize = 0;
@@ -91,21 +98,13 @@ Boolean generateHintTracks = False;
 char* destRTSPURL = NULL;
 unsigned qosMeasurementIntervalMS = 0; // 0 means: Don't output QOS data
 unsigned statusCode = 0;
-#ifdef SUPPORT_REAL_RTSP
-Boolean isRealNetworksSession = False; // by default
-#endif
 
-#ifdef BSD
-static struct timezone Idunno;
-#else
-static int Idunno;
-#endif
 struct timeval startTime;
 
 void usage() {
   *env << "Usage: " << progName
-       << " [-p <startPortNum>] [-r|-q] [-a|-v] [-V] [-e <endTime>] [-E <max-inter-packet-gap-time> [-c] [-s <offset>] [-n] [-O]"
-	   << (controlConnectionUsesTCP ? " [-t]" : "")
+       << " [-p <startPortNum>] [-r|-q|-4|-i] [-a|-v] [-V] [-e <endTime>] [-E <max-inter-packet-gap-time> [-c] [-s <offset>] [-n] [-O]"
+	   << (controlConnectionUsesTCP ? " [-t|-T <http-port>]" : "")
        << " [-u <username> <password>"
 	   << (allowProxyServers ? " [<proxy-server> [<proxy-server-port>]]" : "")
        << "]" << (supportCodecSelection ? " [-A <audio-codec-rtp-payload-format-code>|-D <mime-subtype-name>]" : "")
@@ -121,7 +120,7 @@ int main(int argc, char** argv) {
 
   progName = argv[0];
 
-  gettimeofday(&startTime, &Idunno);
+  gettimeofday(&startTime, NULL);
 
 #ifdef USE_SIGNALS
   // Allow ourselves to be shut down gracefully by a SIGHUP or a SIGUSR1:
@@ -159,6 +158,17 @@ int main(int argc, char** argv) {
 
     case 'q': { // output a QuickTime file (to stdout)
       outputQuickTimeFile = True;
+      break;
+    }
+
+    case '4': { // output a 'mp4'-format file (to stdout)
+      outputQuickTimeFile = True;
+      generateMP4Format = True;
+      break;
+    }
+
+    case 'i': { // output an AVI file (to stdout)
+      outputAVIFile = True;
       break;
     }
 
@@ -251,6 +261,24 @@ int main(int argc, char** argv) {
       break;
     }
 
+    case 'T': {
+      // stream RTP and RTCP over a HTTP connection
+      if (controlConnectionUsesTCP) {
+	if (argc > 3 && argv[2][0] != '-') {
+	  // The next argument is the HTTP server port number:
+	  if (sscanf(argv[2], "%hu", &tunnelOverHTTPPortNum) == 1
+	      && tunnelOverHTTPPortNum > 0) {
+	    ++argv; --argc;
+	    break;
+	  }
+	}
+      }
+
+      // If we get here, the option was specified incorrectly:
+      usage();
+      break;
+    }
+
     case 'u': { // specify a username and password
       username = argv[2];
       password = argv[3];
@@ -289,26 +317,29 @@ int main(int argc, char** argv) {
       break;
     }
 
-    case 'w': { // specify a width (pixels) for an output QuickTime movie
+    case 'w': { // specify a width (pixels) for an output QuickTime or AVI movie
       if (sscanf(argv[2], "%hu", &movieWidth) != 1) {
 	usage();
       }
+      movieWidthOptionSet = True;
       ++argv; --argc;
       break;
     }
 
-    case 'h': { // specify a height (pixels) for an output QuickTime movie
+    case 'h': { // specify a height (pixels) for an output QuickTime or AVI movie
       if (sscanf(argv[2], "%hu", &movieHeight) != 1) {
 	usage();
       }
+      movieHeightOptionSet = True;
       ++argv; --argc;
       break;
     }
 
-    case 'f': { // specify a frame rate (per second) for an output QT movie
+    case 'f': { // specify a frame rate (per second) for an output QT or AVI movie
       if (sscanf(argv[2], "%u", &movieFPS) != 1) {
 	usage();
       }
+      movieFPSOptionSet = True;
       ++argv; --argc;
       break;
     }
@@ -381,13 +412,30 @@ int main(int argc, char** argv) {
     ++argv; --argc;
   }
   if (argc != 2) usage();
-  if (!createReceivers && outputQuickTimeFile) {
-    *env << "The -r and -q flags cannot both be used!\n";
+  if (outputQuickTimeFile && outputAVIFile) {
+    *env << "The -i and -q (or -4) flags cannot both be used!\n";
     usage();
   }
-  if (destRTSPURL != NULL && (!createReceivers || outputQuickTimeFile)) {
-    *env << "The -R flag cannot be used with -r or -q!\n";
+  Boolean outputCompositeFile = outputQuickTimeFile || outputAVIFile;
+  if (!createReceivers && outputCompositeFile) {
+    *env << "The -r and -q (or -4 or -i) flags cannot both be used!\n";
     usage();
+  }
+  if (destRTSPURL != NULL && (!createReceivers || outputCompositeFile)) {
+    *env << "The -R flag cannot be used with -r, -q, or -i!\n";
+    usage();
+  }
+  if (outputCompositeFile && !movieWidthOptionSet) {
+    *env << "Warning: The -q, -4 or -i option was used, but not -w.  Assuming a video width of "
+	 << movieWidth << " pixels\n";
+  }
+  if (outputCompositeFile && !movieHeightOptionSet) {
+    *env << "Warning: The -q, -4 or -i option was used, but not -h.  Assuming a video height of "
+	 << movieHeight << " pixels\n";
+  }
+  if (outputCompositeFile && !movieFPSOptionSet) {
+    *env << "Warning: The -q, -4 or -i option was used, but not -f.  Assuming a video frame rate of "
+	 << movieFPS << " frames-per-second\n";
   }
   if (audioOnly && videoOnly) {
     *env << "The -a and -v flags cannot both be used!\n";
@@ -396,6 +444,14 @@ int main(int argc, char** argv) {
   if (sendOptionsRequestOnly && !sendOptionsRequest) {
     *env << "The -o and -O flags cannot both be used!\n";
     usage();
+  }
+  if (tunnelOverHTTPPortNum > 0) {
+    if (streamUsingTCP) {
+      *env << "The -t and -T flags cannot both be used!\n";
+      usage();
+    } else {
+      streamUsingTCP = True;
+    }
   }
   if (!createReceivers && notifyOnPacketArrival) {
     *env << "Warning: Because we're not receiving stream data, the -n flag has no effect\n";
@@ -546,15 +602,29 @@ int main(int argc, char** argv) {
 					   movieFPS,
 					   packetLossCompensate,
 					   syncStreams,
-					   generateHintTracks);
+					   generateHintTracks,
+					   generateMP4Format);
       if (qtOut == NULL) {
-		*env << "Failed to create QuickTime file sink for stdout: " << env->getResultMsg();
-		shutdown();
+	*env << "Failed to create QuickTime file sink for stdout: " << env->getResultMsg();
+	shutdown();
       }
 
       qtOut->startPlaying(sessionAfterPlaying, NULL);
+    } else if (outputAVIFile) {
+      // Create an "AVIFileSink", to write to 'stdout':
+      aviOut = AVIFileSink::createNew(*env, *session, "stdout",
+				      fileSinkBufferSize,
+				      movieWidth, movieHeight,
+				      movieFPS,
+				      packetLossCompensate);
+      if (aviOut == NULL) {
+	*env << "Failed to create AVI file sink for stdout: " << env->getResultMsg();
+	shutdown();
+      }
+
+      aviOut->startPlaying(sessionAfterPlaying, NULL);
 #ifdef SUPPORT_REAL_RTSP
-    } else if (isRealNetworksSession) {
+    } else if (session->isRealNetworksRDT) {
       // For RealNetworks' sessions, we create a single output file,
       // named "output.rm".
       char outFileName[1000];
@@ -572,7 +642,7 @@ int main(int argc, char** argv) {
       unsigned headerSize;
       unsigned char* headerData = RealGenerateRMFFHeader(session, headerSize);
       struct timeval timeNow;
-      gettimeofday(&timeNow, &Idunno);
+      gettimeofday(&timeNow, NULL);
       fileSink->addData(headerData, headerSize, timeNow);
       delete[] headerData;
 
@@ -657,7 +727,7 @@ int main(int argc, char** argv) {
 	    unsigned char* configData
 	      = parseGeneralConfigStr(subsession->fmtp_config(), configLen);
 	    struct timeval timeNow;
-	    gettimeofday(&timeNow, &Idunno);
+	    gettimeofday(&timeNow, NULL);
 	    fileSink->addData(configData, configLen, timeNow);
 	    delete[] configData;
 	  }
@@ -780,6 +850,7 @@ void tearDownStreams() {
 
 void closeMediaSinks() {
   Medium::close(qtOut);
+  Medium::close(aviOut);
 
   if (session == NULL) return;
   MediaSubsessionIterator iter(*session);
@@ -809,7 +880,7 @@ void subsessionAfterPlaying(void* clientData) {
 
 void subsessionByeHandler(void* clientData) {
   struct timeval timeNow;
-  gettimeofday(&timeNow, &Idunno);
+  gettimeofday(&timeNow, NULL);
   unsigned secsDiff = timeNow.tv_sec - startTime.tv_sec;
 
   MediaSubsession* subsession = (MediaSubsession*)clientData;
@@ -848,7 +919,7 @@ public:
     measurementEndTime = measurementStartTime = startTime;
 
 #ifdef SUPPORT_REAL_RTSP
-    if (isRealNetworksSession) { // hack for RealMedia sessions (RDT, not RTP)
+    if (session->isRealNetworksRDT) { // hack for RealMedia sessions (RDT, not RTP)
       RealRDTSource* rdt = (RealRDTSource*)src;
       kBytesTotal = rdt->totNumKBytesReceived();
       totNumPacketsReceived = rdt->totNumPacketsReceived();
@@ -890,7 +961,7 @@ static unsigned nextQOSMeasurementUSecs;
 static void scheduleNextQOSMeasurement() {
   nextQOSMeasurementUSecs += qosMeasurementIntervalMS*1000;
   struct timeval timeNow;
-  gettimeofday(&timeNow, &Idunno);
+  gettimeofday(&timeNow, NULL);
   unsigned timeNowUSecs = timeNow.tv_sec*1000000 + timeNow.tv_usec;
   unsigned usecsToDelay = nextQOSMeasurementUSecs < timeNowUSecs ? 0
     : nextQOSMeasurementUSecs - timeNowUSecs;
@@ -901,7 +972,7 @@ static void scheduleNextQOSMeasurement() {
 
 static void periodicQOSMeasurement(void* /*clientData*/) {
   struct timeval timeNow;
-  gettimeofday(&timeNow, &Idunno);
+  gettimeofday(&timeNow, NULL);
 
   for (qosMeasurementRecord* qosRecord = qosRecordHead;
        qosRecord != NULL; qosRecord = qosRecord->fNext) {
@@ -920,7 +991,7 @@ void qosMeasurementRecord
   measurementEndTime = timeNow;
 
 #ifdef SUPPORT_REAL_RTSP
-  if (isRealNetworksSession) { // hack for RealMedia sessions (RDT, not RTP)
+  if (session->isRealNetworksRDT) { // hack for RealMedia sessions (RDT, not RTP)
     RealRDTSource* rdt = (RealRDTSource*)fSource;
     double kBytesTotalNow = rdt->totNumKBytesReceived();
     double kBytesDeltaNow = kBytesTotalNow - kBytesTotal;
@@ -972,7 +1043,7 @@ void qosMeasurementRecord
 void beginQOSMeasurement() {
   // Set up a measurement record for each active subsession:
   struct timeval startTime;
-  gettimeofday(&startTime, &Idunno);
+  gettimeofday(&startTime, NULL);
   nextQOSMeasurementUSecs = startTime.tv_sec*1000000 + startTime.tv_usec;
   qosMeasurementRecord* qosRecordTail = NULL;
   MediaSubsessionIterator iter(*session);
@@ -980,7 +1051,7 @@ void beginQOSMeasurement() {
   while ((subsession = iter.next()) != NULL) {
     RTPSource* src = subsession->rtpSource();
 #ifdef SUPPORT_REAL_RTSP
-    if (isRealNetworksSession) src = (RTPSource*)(subsession->readSource()); // hack
+    if (session->isRealNetworksRDT) src = (RTPSource*)(subsession->readSource()); // hack
 #endif
     if (src == NULL) continue;
 
@@ -1009,7 +1080,7 @@ void printQOSData(int exitCode) {
     while ((subsession = iter.next()) != NULL) {
       RTPSource* src = subsession->rtpSource();
 #ifdef SUPPORT_REAL_RTSP
-      if (isRealNetworksSession) src = (RTPSource*)(subsession->readSource()); // hack
+      if (session->isRealNetworksRDT) src = (RTPSource*)(subsession->readSource()); // hack
 #endif
       if (src == NULL) continue;
 
@@ -1059,7 +1130,7 @@ void printQOSData(int exitCode) {
 	     << (packetLossFraction == 1.0 ? 100.0 : 100*curQOSRecord->packet_loss_fraction_max) << "\n";
 	
 #ifdef SUPPORT_REAL_RTSP
-	if (isRealNetworksSession) {
+	if (session->isRealNetworksRDT) {
 	  RealRDTSource* rdt = (RealRDTSource*)src;
 	  *env << "inter_packet_gap_ms_min\t" << rdt->minInterPacketGapUS()/1000.0 << "\n";
 	  struct timeval totalGaps = rdt->totalInterPacketGaps();
@@ -1151,10 +1222,12 @@ void checkForPacketArrival(void* /*clientData*/) {
   }
 
   unsigned numSubsessionsToCheck = numSubsessionsChecked;
+  // Special case for "QuickTimeFileSink"s and "AVIFileSink"s:
+  // They might not use all of the input sources:
   if (qtOut != NULL) {
-    // Special case for "QuickTimeFileSink"s: They might not use all of the
-    // input sources:
     numSubsessionsToCheck = qtOut->numActiveSubsessions();
+  } else if (aviOut != NULL) {
+    numSubsessionsToCheck = aviOut->numActiveSubsessions();
   }
 
   Boolean notifyTheUser;
@@ -1167,7 +1240,7 @@ void checkForPacketArrival(void* /*clientData*/) {
   }
   if (notifyTheUser) {
     struct timeval timeNow;
-    gettimeofday(&timeNow, &Idunno);
+    gettimeofday(&timeNow, NULL);
 	char timestampStr[100];
 	sprintf(timestampStr, "%ld%03ld", timeNow.tv_sec, timeNow.tv_usec/1000);
     *env << (syncStreams ? "Synchronized d" : "D")
@@ -1360,7 +1433,7 @@ Boolean setupDestinationRTSPServer() {
     if (!rtspClientOutgoing->setupMediaSubsession(*destSubsession,
 						  True, True)) break;
     if (!rtspClientOutgoing->playMediaSubsession(*destSubsession,
-						 0.0, -1.0,
+						 0.0, -1.0, 1.0,
 						 True/*hackForDSS*/)) break;
 
     // Next, set up "RTPSink"s for the outgoing packets:

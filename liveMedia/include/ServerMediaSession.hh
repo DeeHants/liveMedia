@@ -42,6 +42,7 @@ public:
 				       Boolean isSSM = False,
 				       char const* miscSDPLines = NULL);
 			       
+  virtual ~ServerMediaSession();
 
   static Boolean lookupByName(UsageEnvironment& env,
                               char const* mediumName,
@@ -52,11 +53,20 @@ public:
 
   char const* streamName() const { return fStreamName; }
 
-  virtual ~ServerMediaSession();
-
   Boolean addSubsession(ServerMediaSubsession* subsession);
 
-private:
+  void testScaleFactor(float& scale); // sets "scale" to the actual supported scale
+  float duration() const;
+    // a result == 0 means an unbounded session (the default)
+    // a result < 0 means: subsession durations differ; the result is -(the largest)
+    // a result > 0 means: this is the duration of a bounded session
+
+  unsigned referenceCount() const { return fReferenceCount; }
+  void incrementReferenceCount() { ++fReferenceCount; }
+  void decrementReferenceCount() { if (fReferenceCount > 0) --fReferenceCount; }
+  Boolean& deleteWhenUnreferenced() { return fDeleteWhenUnreferenced; }
+
+protected:
   ServerMediaSession(UsageEnvironment& env, char const* streamName,
 		     char const* info, char const* description,
 		     Boolean isSSM, char const* miscSDPLines);
@@ -79,6 +89,8 @@ private:
   char* fDescriptionSDPString;
   char* fMiscSDPLines;
   struct timeval fCreationTime;
+  unsigned fReferenceCount;
+  Boolean fDeleteWhenUnreferenced;
 };
 
 
@@ -102,7 +114,7 @@ public:
 
   unsigned trackNumber() const { return fTrackNumber; }
   char const* trackId();
-  virtual char const* sdpLines() = 0;
+  virtual char const* sdpLines(ServerMediaSession& parentSession) = 0;
   virtual void getStreamParameters(unsigned clientSessionId, // in
 				   netAddressBits clientAddress, // in
 				   Port const& clientRTPPort, // in
@@ -117,12 +129,24 @@ public:
 				   Port& serverRTCPPort, // out
 				   void*& streamToken // out
 				   ) = 0;
-  virtual void startStream(unsigned clientSessionId, void* streamToken);
+  virtual void startStream(unsigned clientSessionId, void* streamToken,
+			   unsigned short& rtpSeqNum,
+			   unsigned& rtpTimestamp) = 0;
   virtual void pauseStream(unsigned clientSessionId, void* streamToken);
+  virtual void seekStream(unsigned clientSessionId, void* streamToken, float seekNPT);
+  virtual void setStreamScale(unsigned clientSessionId, void* streamToken, float scale);
   virtual void deleteStream(unsigned clientSessionId, void*& streamToken);
+
+  virtual void testScaleFactor(float& scale); // sets "scale" to the actual supported scale
+  virtual float duration() const;
+    // returns 0 for an unbounded session (the default)
+    // returns > 0 for a bounded session
 
 protected: // we're a virtual base class
   ServerMediaSubsession(UsageEnvironment& env);
+
+  char const* rangeSDPLine(ServerMediaSession& parentSession) const;
+      // returns a string to be delete[]d
 
 private:
   friend class ServerMediaSession;

@@ -38,7 +38,8 @@ public:
   // used by RTCP:
   unsigned SSRC() const {return fSSRC;}
      // later need a means of changing the SSRC if there's a collision #####
-  unsigned convertToRTPTimestamp(struct timeval timestamp) const;
+  u_int32_t convertToRTPTimestamp(struct timeval tv, Boolean isFirstTime);
+  u_int32_t convertToRTPTimestamp(struct timeval tv) const;
   unsigned packetCount() const {return fPacketCount;}
   unsigned octetCount() const {return fOctetCount;}
 
@@ -56,6 +57,7 @@ public:
   unsigned numChannels() const { return fNumChannels; }
 
   virtual char const* sdpMediaType() const; // for use in SDP m= lines
+  char* rtpmapLine() const; // returns a string to be delete[]d
   virtual char const* auxSDPLine();
       // optional SDP line (e.g. a=fmtp:...)
 
@@ -103,6 +105,9 @@ private:
   virtual Boolean isRTPSink() const;
 
 private:
+  u_int32_t timevalToTimestamp(struct timeval tv) const;
+
+private:
   unsigned fSSRC, fTimestampBase, fTimestampFrequency;
   char const* fRTPPayloadFormatName;
   unsigned fNumChannels;
@@ -131,9 +136,12 @@ public:
   };
 
   // The following is called whenever a RTCP RR packet is received: 
-  void noteIncomingRR(unsigned SSRC,
+  void noteIncomingRR(unsigned SSRC, struct sockaddr_in const& lastFromAddress,
                       unsigned lossStats, unsigned lastPacketNumReceived,
                       unsigned jitter, unsigned lastSRTime, unsigned diffSR_RRTime);
+
+  // The following is called when a RTCP BYE packet is received:
+  void removeRecord(unsigned SSRC);
 
 private: // constructor and destructor, called only by RTPSink:
   friend class RTPSink;
@@ -154,6 +162,7 @@ private:
 class RTPTransmissionStats {
 public:
   unsigned SSRC() const {return fSSRC;}
+  struct sockaddr_in const& lastFromAddress() const {return fLastFromAddress;}
   unsigned lastPacketNumReceived() const {return fLastPacketNumReceived;}
   unsigned firstPacketNumReported() const {return fFirstPacketNumReported;}
   unsigned totNumPacketsLost() const {return fTotNumPacketsLost;}
@@ -163,7 +172,10 @@ public:
   unsigned roundTripDelay() const;
       // The round-trip delay (in units of 1/65536 seconds) computed from
       // the most recently-received RTCP RR packet.
+  struct timeval timeCreated() const {return fTimeCreated;}
   struct timeval lastTimeReceived() const {return fTimeReceived;}
+  void getTotalOctetCount(u_int32_t& hi, u_int32_t& lo);
+  void getTotalPacketCount(u_int32_t& hi, u_int32_t& lo);
 
   // Information which requires at least two RRs to have been received:
   Boolean oldValid() const {return fOldValid;} // Have two RRs been received?
@@ -178,24 +190,29 @@ private:
   RTPTransmissionStats(RTPSink& rtpSink, unsigned SSRC);
   virtual ~RTPTransmissionStats();
 
-  void noteIncomingRR(unsigned lossStats, unsigned lastPacketNumReceived,
-                      unsigned jitter, unsigned lastSRTime, unsigned diffSR_RRTime);
+  void noteIncomingRR(struct sockaddr_in const& lastFromAddress,
+		      unsigned lossStats, unsigned lastPacketNumReceived,
+                      unsigned jitter,
+		      unsigned lastSRTime, unsigned diffSR_RRTime);
 
 private:
   RTPSink& fOurRTPSink;
   unsigned fSSRC;
+  struct sockaddr_in fLastFromAddress;
   unsigned fLastPacketNumReceived;
   u_int8_t fPacketLossRatio;
   unsigned fTotNumPacketsLost;
   unsigned fJitter;
   unsigned fLastSRTime;
   unsigned fDiffSR_RRTime;
-  struct timeval fTimeReceived;
+  struct timeval fTimeCreated, fTimeReceived;
   Boolean fOldValid;
   unsigned fOldLastPacketNumReceived;
   unsigned fOldTotNumPacketsLost;
   Boolean fFirstPacket;
   unsigned fFirstPacketNumReported;
+  u_int32_t fLastOctetCount, fTotalOctetCount_hi, fTotalOctetCount_lo;
+  u_int32_t fLastPacketCount, fTotalPacketCount_hi, fTotalPacketCount_lo;
 };
 
 #endif

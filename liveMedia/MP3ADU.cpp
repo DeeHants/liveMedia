@@ -54,9 +54,9 @@ unsigned const Segment::headerSize = 4;
 class SegmentQueue {
 public:
   SegmentQueue(Boolean directionIsToADU, Boolean includeADUdescriptors)
-    : fHeadIndex(0), fNextFreeIndex(0), fTotalDataSize(0),
-      fDirectionIsToADU(directionIsToADU),
+    : fDirectionIsToADU(directionIsToADU),
       fIncludeADUdescriptors(includeADUdescriptors) {
+    reset();
   }
 
   Segment s[SegmentQueueSize];
@@ -79,6 +79,8 @@ public:
   Boolean dequeue();
 
   Boolean insertDummyBeforeTail(unsigned backpointer);
+
+  void reset() { fHeadIndex = fNextFreeIndex = fTotalDataSize = 0; }
 
 private:
   static void sqAfterGettingSegment(void* clientData,
@@ -114,7 +116,7 @@ ADUFromMP3Source::ADUFromMP3Source(UsageEnvironment& env,
     fSegments(new SegmentQueue(True /* because we're MP3->ADU */,
 			       False /*no descriptors in incoming frames*/)),
     fIncludeADUdescriptors(includeADUdescriptors),
-    fTotalDataSizeBeforePreviousRead(0) {
+    fTotalDataSizeBeforePreviousRead(0), fScale(1), fFrameCounter(0) {
 }
 
 ADUFromMP3Source::~ADUFromMP3Source() {
@@ -123,19 +125,29 @@ ADUFromMP3Source::~ADUFromMP3Source() {
 
 
 char const* ADUFromMP3Source::MIMEtype() const {
-  return "audio/mpa-robust";
+  return "audio/MPA-ROBUST";
 }
 
 ADUFromMP3Source* ADUFromMP3Source::createNew(UsageEnvironment& env,
                                               FramedSource* inputSource,
                                               Boolean includeADUdescriptors) {
   // The source must be a MPEG audio source:
-  if (strcmp(inputSource->MIMEtype(), "audio/mpeg") != 0) {
+  if (strcmp(inputSource->MIMEtype(), "audio/MPEG") != 0) {
     env.setResultMsg(inputSource->name(), " is not an MPEG audio source");
     return NULL;
   }
 
   return new ADUFromMP3Source(env, inputSource, includeADUdescriptors);
+}
+
+void ADUFromMP3Source::resetInput() {
+  fSegments->reset();
+}
+
+Boolean ADUFromMP3Source::setScaleFactor(int scale) {
+  if (scale < 1) return False;
+  fScale = scale;
+  return True;
 }
 
 void ADUFromMP3Source::doGetNextFrame() {
@@ -244,9 +256,14 @@ Boolean ADUFromMP3Source::doGetNextFrame1() {
   }
 
 
-  // Call our own 'after getting' function.  Because we're not a 'leaf'
-  // source, we can call this directly, without risking infinite recursion.
-  afterGetting(this);
+  if (fFrameCounter++%fScale == 0) {
+    // Call our own 'after getting' function.  Because we're not a 'leaf'
+    // source, we can call this directly, without risking infinite recursion.
+    afterGetting(this);
+  } else {
+    // Don't use this frame; get another one:
+    doGetNextFrame();
+  }
 
   return True;
 }
@@ -269,14 +286,14 @@ MP3FromADUSource::~MP3FromADUSource() {
 }
 
 char const* MP3FromADUSource::MIMEtype() const {
-  return "audio/mpeg";
+  return "audio/MPEG";
 }
 
 MP3FromADUSource* MP3FromADUSource::createNew(UsageEnvironment& env,
 					      FramedSource* inputSource,
 					      Boolean includeADUdescriptors) {
   // The source must be an MP3 ADU source:
-  if (strcmp(inputSource->MIMEtype(), "audio/mpa-robust") != 0) {
+  if (strcmp(inputSource->MIMEtype(), "audio/MPA-ROBUST") != 0) {
     env.setResultMsg(inputSource->name(), " is not an MP3 ADU source");
     return NULL;
   }
@@ -554,6 +571,14 @@ Boolean SegmentQueue::sqAfterGettingCommon(Segment& seg,
     return False;
   }
   
+  // If we've just read an ADU (rather than a regular MP3 frame), then use the
+  // entire "numBytesRead" data for the 'aduSize', so that we include any
+  // 'ancillary data' that may be present at the end of the ADU:
+  if (!fDirectionIsToADU) {
+    unsigned newADUSize
+      = numBytesRead - seg.descriptorSize - 4/*header size*/ - seg.sideInfoSize;
+    if (newADUSize > seg.aduSize) seg.aduSize = newADUSize;
+  }
   fTotalDataSize += seg.dataHere();
   fNextFreeIndex = nextIndex(fNextFreeIndex);
 

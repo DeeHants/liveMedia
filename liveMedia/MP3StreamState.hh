@@ -36,6 +36,8 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 
 #include <stdio.h>
 
+#define XING_TOC_LENGTH 100
+
 class MP3StreamState {
 public:
   MP3StreamState(UsageEnvironment& env);
@@ -54,6 +56,10 @@ public:
   void writeGetCmd(char const* hostName, unsigned short portNum,
 		   char const* fileName);
 
+  float filePlayTime() const; // in seconds
+  void setPresentationTimeScale(unsigned scale) { fPresentationTimeScale = scale; }
+  void seekWithinFile(float seekNPT);
+
   void checkForXingHeader(); // hack for Xing VBR files
 
 private:
@@ -61,7 +67,6 @@ private:
   MP3FrameParams const& fr() const {return fCurrentFrame;}
 
   struct timeval currentFramePlayTime() const;
-  unsigned filePlayTime() const; // in seconds
 
   Boolean findNextFrame();
   unsigned readFromStream(unsigned char* buf, unsigned numChars);
@@ -72,7 +77,10 @@ private:
   Boolean fFidIsReallyASocket;
   unsigned fFileSize;
   unsigned fNumFramesInFile;
-  Boolean fIsVBR;
+  unsigned fPresentationTimeScale;
+    // used if we're streaming at other than the normal rate
+  Boolean fIsVBR, fHasXingTOC;
+  u_int8_t fXingTOC[XING_TOC_LENGTH]; // set iff "fHasXingTOC" is True
 
   MP3FrameParams fCurrentFrame;
   struct timeval fNextFramePresentationTime;
