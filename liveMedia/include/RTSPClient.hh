@@ -59,6 +59,7 @@ public:
       // Uses "describeURL()" to do a "DESCRIBE" - first
       // without using "password", then (if we get an Unauthorized
       // response) with an authentication response computed from "password"
+
   Boolean announceSDPDescription(char const* url,
 				 char const* sdpDescription,
 				 AuthRecord* authenticator = NULL);
@@ -69,6 +70,7 @@ public:
       // Uses "announceSDPDescription()" to do an "ANNOUNCE" - first
       // without using "password", then (if we get an Unauthorized
       // response) with an authentication response computed from "password"
+
   char* sendOptionsCmd(char const* url);
       // Issues a RTSP "OPTIONS" command
       // Returns a string containing the list of options, or NULL
@@ -78,24 +80,36 @@ public:
 			       Boolean streamUsingTCP = False);
       // Issues a RTSP "SETUP" command on "subsession".
       // Returns True iff this command succeeds
-  Boolean playMediaSession(MediaSession& session);
+
+  Boolean playMediaSession(MediaSession& session,
+			   float start = 0.0, float end = -1.0);
       // Issues an aggregate RTSP "PLAY" command on "session".
       // Returns True iff this command succeeds
+      // (Note: start=-1 means 'resume'; end=-1 means 'play to end')
   Boolean playMediaSubsession(MediaSubsession& subsession,
 			      float start = 0.0, float end = -1.0,
 			      Boolean hackForDSS = False);
       // Issues a RTSP "PLAY" command on "subsession".
       // Returns True iff this command succeeds
       // (Note: start=-1 means 'resume'; end=-1 means 'play to end')
+
   Boolean pauseMediaSession(MediaSession& session);
-      // Issues an aggregate RTSP "PLAY" command on "session".
+      // Issues an aggregate RTSP "PAUSE" command on "session".
       // Returns True iff this command succeeds
   Boolean pauseMediaSubsession(MediaSubsession& subsession);
       // Issues a RTSP "PAUSE" command on "subsession".
       // Returns True iff this command succeeds
+
   Boolean recordMediaSubsession(MediaSubsession& subsession);
       // Issues a RTSP "RECORD" command on "subsession".
       // Returns True iff this command succeeds
+
+  Boolean setMediaSessionParameter(MediaSession& session,
+				   char const* parameterName,
+				   char const* parameterValue);
+      // Issues a RTSP "SET_PARAMETER" command on "subsession".
+      // Returns True iff this command succeeds
+
   Boolean teardownMediaSession(MediaSession& session);
       // Issues an aggregate RTSP "TEARDOWN" command on "session".
       // Returns True iff this command succeeds
@@ -111,6 +125,10 @@ public:
 					      char*& password);
 
   unsigned describeStatus() const { return fDescribeStatusCode; }
+
+#ifdef SUPPORT_REAL_RTSP
+  Boolean isRealNetworksSession() const { return fRealChallengeStr != NULL; }
+#endif
 
 protected:
   virtual ~RTSPClient();
@@ -156,6 +174,10 @@ private:
   AuthRecord* fCurrentAuthenticator; // if any
   unsigned char fTCPStreamIdCount; // used for (optional) RTP/TCP
   char* fLastSessionId;
+#ifdef SUPPORT_REAL_RTSP
+  char* fRealChallengeStr;
+  char* fRealETagStr;
+#endif
   unsigned fDescribeStatusCode;
   // 0: OK; 1: connection failed; 2: stream unavailable
 };

@@ -25,14 +25,11 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include "FramedSource.hh"
 #endif
 
-// A structure for holding input data to be parsed.
-// (Eventually replace with iostream stuff) ##### 
-#define BANK_SIZE 150000
-
 class StreamParser {
 protected: // we're a virtual base class
   typedef void (clientContinueFunc)(void* clientData,
-				    unsigned char* ptr, unsigned size);
+				    unsigned char* ptr, unsigned size,
+				    struct timeval presentationTime);
   StreamParser(FramedSource* inputSource,
 	       FramedSource::onCloseFunc* onInputCloseFunc,
 	       void* onInputCloseClientData,
@@ -121,7 +118,7 @@ private:
   void* fClientContinueClientData;
 
   // Use a pair of 'banks', and swap between them as they fill up:
-  unsigned char fBank[2][BANK_SIZE];
+  unsigned char* fBank[2];
   unsigned char fCurBankNum;
   unsigned char* fCurBank;
 

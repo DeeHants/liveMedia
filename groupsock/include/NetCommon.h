@@ -21,22 +21,25 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #ifndef _NET_COMMON_H
 #define _NET_COMMON_H
 
-#include <string.h>
-
 #if defined(IMN_PIM)
 #include "IMN_PIMNetCommon.h"
 
-#elif defined(__WIN32__) || defined(_WIN32)
+#elif defined(__WIN32__) || defined(_WIN32) || defined(_WIN32_WCE)
 /* Windows */
-#if defined(_WINNT) || defined(__BORLANDC__)
+#if defined(_WINNT) || defined(__BORLANDC__) || defined(__MINGW32__) || defined(_WIN32_WCE)
 #define _MSWSOCK_
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #endif
 #include <windows.h>
+#include <string.h>
 
 #define _close closesocket
 #define EWOULDBLOCK WSAEWOULDBLOCK
+
+#if defined(_WIN32_WCE)
+#define NO_STRSTREAM 1
+#endif
 
 /* Definitions of size-specific types: */
 typedef unsigned u_int32_t;
@@ -44,6 +47,7 @@ typedef unsigned short u_int16_t;
 typedef unsigned char u_int8_t;
 
 #elif defined(VXWORKS)
+/* VxWorks */
 #include <time.h>
 #include <timers.h>
 #include <sys/times.h>
@@ -65,6 +69,7 @@ typedef unsigned char u_int8_t;
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <unistd.h>
+#include <string.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <strings.h>

@@ -20,6 +20,9 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 
 #include "RTSPClient.hh"
 #include "GroupsockHelper.hh"
+#ifdef SUPPORT_REAL_RTSP
+#include "../RealRTSP/include/RealRTSP.hh"
+#endif
 #include "our_md5.h"
 #include <stdlib.h>
 
@@ -59,7 +62,11 @@ RTSPClient::RTSPClient(UsageEnvironment& env,
   : Medium(env),
     fVerbosityLevel(verbosityLevel), fSocketNum(-1), fServerAddress(0),
     fCSeq(0), fBaseURL(NULL), fCurrentAuthenticator(NULL),
-    fTCPStreamIdCount(0), fLastSessionId(NULL) {
+    fTCPStreamIdCount(0), fLastSessionId(NULL)
+#ifdef SUPPORT_REAL_RTSP
+  , fRealChallengeStr(NULL), fRealETagStr(NULL)
+#endif
+{
   // Set the "User-Agent:" header to use in each request:
   char const* const libName = "LIVE.COM Streaming Media v";
   char const* const libVersionStr = LIVEMEDIA_LIBRARY_VERSION_STRING;
@@ -100,6 +107,10 @@ void RTSPClient::reset() {
 
   resetCurrentAuthenticator();
 
+#ifdef SUPPORT_REAL_RTSP
+  delete[] fRealChallengeStr; fRealChallengeStr = NULL;
+  delete[] fRealETagStr; fRealETagStr = NULL;
+#endif
   delete[] fLastSessionId; fLastSessionId = NULL;
 }
 
@@ -144,12 +155,12 @@ char* RTSPClient::describeURL(char const* url, AuthRecord* authenticator) {
       "DESCRIBE %s RTSP/1.0\r\n"
       "CSeq: %d\r\n"
       "Accept: application/sdp\r\n"
-      // Uncomment the following to simulate a RealNetworks client
-      // (RealNetworks' servers sometimes behave differently if they
-      //  think the client is one of theirs.):
-      //"ClientID: WinNT_4.0_6.0.11.818_RealPlayer_RN10PD_en-us_686\r\n"
       "%s"
-      "%s\r\n";
+     "%s"
+#ifdef SUPPORT_REAL_RTSP
+      REAL_DESCRIBE_HEADERS
+#endif
+      "\r\n";
     unsigned cmdSize = strlen(cmdFmt)
       + strlen(url)
       + 20 /* max int len */
@@ -181,6 +192,9 @@ char* RTSPClient::describeURL(char const* url, AuthRecord* authenticator) {
     // we can handle.
     Boolean wantRedirection = False;
     char* redirectionURL = NULL;
+#ifdef SUPPORT_REAL_RTSP
+    delete[] fRealETagStr; fRealETagStr = new char[readBufSize];
+#endif
     char* firstLine = readBuf;
     char* nextLineStart = getLine(firstLine);
     unsigned responseCode;
@@ -239,6 +253,9 @@ char* RTSPClient::describeURL(char const* url, AuthRecord* authenticator) {
 			       lineStart, "\"");
 	  break;
 	}
+#ifdef SUPPORT_REAL_RTSP
+      } else if (sscanf(lineStart, "ETag: %s", fRealETagStr) == 1) {
+#endif
       } else if (wantRedirection) { 
 	if (sscanf(lineStart, "Location: %s", redirectionURL) == 1) {
 	  // Try again with this URL
@@ -376,14 +393,20 @@ char* RTSPClient::sendOptionsCmd(char const* url) {
 
     // Send the OPTIONS command:
     char* const cmdFmt =
-      "OPTIONS * RTSP/1.0\r\n"
+      "OPTIONS %s RTSP/1.0\r\n"
       "CSeq: %d\r\n"
-      "%s\r\n";
+      "%s"
+#ifdef SUPPORT_REAL_RTSP
+      REAL_OPTIONS_HEADERS
+#endif
+      "\r\n";
     unsigned cmdSize = strlen(cmdFmt)
+      + strlen(url)
       + 20 /* max int len */
       + fUserAgentHeaderStrSize;
     cmd = new char[cmdSize];
     sprintf(cmd, cmdFmt,
+	    url,
 	    ++fCSeq,
 	    fUserAgentHeaderStr);
 
@@ -420,8 +443,11 @@ char* RTSPClient::sendOptionsCmd(char const* url) {
       nextLineStart = getLine(lineStart);
 
       if (_strncasecmp(lineStart, "Public: ", 8) == 0) {
-	result = strDup(&lineStart[8]);
-	break;
+	delete[] result; result = strDup(&lineStart[8]);
+#ifdef SUPPORT_REAL_RTSP
+      } else if (_strncasecmp(lineStart, "RealChallenge1: ", 16) == 0) {
+	delete[] fRealChallengeStr; fRealChallengeStr = strDup(&lineStart[16]);
+#endif
       }
     }
   } while (0);
@@ -649,45 +675,81 @@ Boolean RTSPClient::setupMediaSubsession(MediaSubsession& subsession,
       sessionStr = "";
     }
 
+    char* transportStr = NULL;
+#ifdef SUPPORT_REAL_RTSP
+    if (isRealNetworksSession()) {
+      // For RealNetworks streams, use a special "Transport:" header, and
+      // also add a 'challenge response'.
+      char challenge2[64];
+      char checksum[34];
+      RealCalculateChallengeResponse(fRealChallengeStr, challenge2, checksum);
+
+      char const* etag = fRealETagStr == NULL ? "" : fRealETagStr;
+
+      char const* transportFmt =
+	"Transport: x-pn-tng/tcp;mode=play,rtp/avp/unicast;mode=play\r\n"
+	"RealChallenge2: %s, sd=%s\r\n"
+	"If-Match: %s\r\n";
+      unsigned transportSize = strlen(transportFmt)
+	+ sizeof challenge2 + sizeof checksum
+	+ strlen(etag);
+      transportStr = new char[transportSize];
+      sprintf(transportStr, transportFmt, challenge2, checksum, etag);
+
+      // Also, tell the RDT source to use the RTSP TCP socket:
+      RealRDTSource* rdtSource = (RealRDTSource*)(subsession.readSource());
+      rdtSource->setInputSocket(fSocketNum);
+    }
+#endif
+    if (transportStr == NULL) {
+      // Use a standard "Transport:" header.
+      char const* transportTypeStr;
+      char const* modeStr = streamOutgoing ? ";mode=receive" : "";
+          // Note: I think the above is nonstandard, but DSS wants it this way
+      char const* portTypeStr;
+      unsigned short rtpNumber, rtcpNumber;
+      if (streamUsingTCP) { // streaming over the RTSP connection
+	transportTypeStr = "/TCP;unicast";
+	portTypeStr = ";interleaved";
+	rtpNumber = fTCPStreamIdCount++;
+	rtcpNumber = fTCPStreamIdCount++;
+      } else { // normal RTP streaming      
+	unsigned connectionAddress = subsession.connectionEndpointAddress();
+	transportTypeStr
+	  = IsMulticastAddress(connectionAddress) ? ";multicast" : ";unicast";
+	portTypeStr = ";client_port";
+	rtpNumber = subsession.clientPortNum();
+	if (rtpNumber == 0) {
+	  envir().setResultMsg("Client port number unknown\n");
+	  break;
+	}
+	rtcpNumber = rtpNumber + 1;
+      }
+      char const* transportFmt = "Transport: RTP/AVP%s%s%s=%d-%d\r\n";
+      unsigned transportSize = strlen(transportFmt)
+	+ strlen(transportTypeStr) + strlen(modeStr) + strlen(portTypeStr) + 2*5 /* max port len */;
+      transportStr = new char[transportSize];
+      sprintf(transportStr, transportFmt,
+	      transportTypeStr, modeStr, portTypeStr, rtpNumber, rtcpNumber);
+    }
+
     // (Later implement more, as specified in the RTSP spec, sec D.1 #####)
     char* const cmdFmt =
       "SETUP %s%s%s RTSP/1.0\r\n"
       "CSeq: %d\r\n"
-      "Transport: RTP/AVP%s%s%s=%d-%d\r\n"
       "%s"
       "%s"
-      "%s\r\n";
+      "%s"
+      "%s"
+      "\r\n";
 
     char const *prefix, *separator, *suffix;
     constructSubsessionURL(subsession, prefix, separator, suffix);
 
-    char const* transportTypeString;
-    char const* modeString = streamOutgoing ? ";mode=receive" : "";
-       // Note: I think the above is nonstandard, but DSS wants it this way
-    char const* portTypeString;
-    unsigned short rtpNumber, rtcpNumber;
-    if (streamUsingTCP) { // streaming over the RTSP connection
-      transportTypeString = "/TCP;unicast";
-      portTypeString = ";interleaved";
-      rtpNumber = fTCPStreamIdCount++;
-      rtcpNumber = fTCPStreamIdCount++;
-    } else { // normal RTP streaming      
-      unsigned connectionAddress = subsession.connectionEndpointAddress();
-      transportTypeString
-	= IsMulticastAddress(connectionAddress)	? ";multicast" : ";unicast";
-      portTypeString = ";client_port";
-      rtpNumber = subsession.clientPortNum();
-      if (rtpNumber == 0) {
-	envir().setResultMsg("Client port number unknown\n");
-	break;
-      }
-      rtcpNumber = rtpNumber + 1;
-    }
     unsigned cmdSize = strlen(cmdFmt)
       + strlen(prefix) + strlen(separator) + strlen(suffix)
       + 20 /* max int len */
-      + strlen(transportTypeString) + strlen(modeString)
-          + strlen(portTypeString) + 2*5 /* max port len */
+      + strlen(transportStr)
       + strlen(sessionStr)
       + strlen(authenticatorStr)
       + fUserAgentHeaderStrSize;
@@ -695,15 +757,15 @@ Boolean RTSPClient::setupMediaSubsession(MediaSubsession& subsession,
     sprintf(cmd, cmdFmt,
 	    prefix, separator, suffix,
 	    ++fCSeq,
-	    transportTypeString, modeString, portTypeString,
-	        rtpNumber, rtcpNumber,
+	    transportStr,
 	    sessionStr,
 	    authenticatorStr,
 	    fUserAgentHeaderStr);
     delete[] authenticatorStr;
     if (sessionStr[0] != '\0') delete[] sessionStr;
+    delete[] transportStr;
 
-    // And then sent it:
+    // And then send it:
     if (!sendRequest(cmd)) {
       envir().setResultErrMsg("SETUP send() failed: ");
       break;
@@ -739,7 +801,7 @@ Boolean RTSPClient::setupMediaSubsession(MediaSubsession& subsession,
 
       nextLineStart = getLine(lineStart);
 
-      if (sscanf(lineStart, "Session: %s", sessionId) == 1) {
+      if (sscanf(lineStart, "Session: %[^;]", sessionId) == 1) {
 	subsession.sessionId = strDup(sessionId);
 	delete[] fLastSessionId; fLastSessionId = strDup(sessionId);
 	continue;
@@ -769,10 +831,12 @@ Boolean RTSPClient::setupMediaSubsession(MediaSubsession& subsession,
     if (streamUsingTCP) {
       // Tell the subsession to receive RTP (and send/receive RTCP)
       // over the RTSP stream:
-      subsession.rtpSource()->setStreamSocket(fSocketNum,
-					      subsession.rtpChannelId);
-      subsession.rtcpInstance()->setStreamSocket(fSocketNum,
-						 subsession.rtcpChannelId);
+      if (subsession.rtpSource() != NULL)
+	subsession.rtpSource()->setStreamSocket(fSocketNum,
+						subsession.rtpChannelId);
+      if (subsession.rtcpInstance() != NULL)
+	subsession.rtcpInstance()->setStreamSocket(fSocketNum,
+						   subsession.rtcpChannelId);
     } else {
       // Normal case.
       // Set the RTP and RTCP sockets' destination address and port
@@ -788,7 +852,32 @@ Boolean RTSPClient::setupMediaSubsession(MediaSubsession& subsession,
   return False;
 }
 
-Boolean RTSPClient::playMediaSession(MediaSession& session) {
+static char* createRangeString(float start, float end) {
+  char buf[100];
+  if (start < 0) {
+    // We're resuming from a PAUSE; there's no "Range:" header at all
+    buf[0] = '\0';
+  } else if (end < 0) {
+    // There's no end time:
+    sprintf(buf, "Range: npt=%.3f-\r\n", start);
+  } else {
+    // There's both a start and an end time; include them both in the "Range:" hdr
+    sprintf(buf, "Range: npt=%.3f-%.3f\r\n", start, end);
+  }
+
+  return strDup(buf);
+}
+      
+Boolean RTSPClient::playMediaSession(MediaSession& session,
+				     float start, float end) {
+#ifdef SUPPORT_REAL_RTSP
+  if (isRealNetworksSession()) {
+    // This is a RealNetworks stream; set the "Subscribe" parameter before proceeding:
+    char* streamRuleString = RealGetSubscribeRuleString(&session);
+    setMediaSessionParameter(session, "Subscribe", streamRuleString);
+    delete[] streamRuleString;
+  }
+#endif
   char* cmd = NULL;
   do {
     // First, make sure that we have a RTSP session in progress
@@ -802,19 +891,23 @@ Boolean RTSPClient::playMediaSession(MediaSession& session) {
     // First, construct an authenticator string:
     char* authenticatorStr
       = createAuthenticatorString(fCurrentAuthenticator, "PLAY", fBaseURL);
+    // And then a "Range:" string:
+    char* rangeStr = createRangeString(start, end);
 
     char* const cmdFmt =
       "PLAY %s RTSP/1.0\r\n"
       "CSeq: %d\r\n"
       "Session: %s\r\n"
-      "Range: npt=0-\r\n"
       "%s"
-      "%s\r\n";
+      "%s"
+      "%s"
+      "\r\n";
 
     unsigned cmdSize = strlen(cmdFmt)
       + strlen(fBaseURL)
       + 20 /* max int len */
       + strlen(fLastSessionId)
+      + strlen(rangeStr)
       + strlen(authenticatorStr)
       + fUserAgentHeaderStrSize;
     cmd = new char[cmdSize];
@@ -822,8 +915,10 @@ Boolean RTSPClient::playMediaSession(MediaSession& session) {
 	    fBaseURL,
 	    ++fCSeq,
 	    fLastSessionId,
+	    rangeStr,
 	    authenticatorStr,
 	    fUserAgentHeaderStr);
+    delete[] rangeStr;
     delete[] authenticatorStr;
 
     if (!sendRequest(cmd)) {
@@ -875,20 +970,18 @@ Boolean RTSPClient::playMediaSubsession(MediaSubsession& subsession,
     // First, construct an authenticator string:
     char* authenticatorStr
       = createAuthenticatorString(fCurrentAuthenticator, "PLAY", fBaseURL);
+    // And then a "Range:" string:
+    char* rangeStr = createRangeString(start, end);
 
     char* const cmdFmt =
       "PLAY %s%s%s RTSP/1.0\r\n"
       "CSeq: %d\r\n"
       "Session: %s\r\n"
-      "Range: npt=%s-%s\r\n"
       "%s"
-      "%s\r\n";
+      "%s"
+      "%s"
+      "\r\n";
 
-    char startStr[30], endStr[30];
-    sprintf(startStr, "%.3f", start); sprintf(endStr, "%.3f", end);
-    if (start==-1) startStr[0]='\0';
-    if (end == -1) endStr[0] = '\0';
-      
     char const *prefix, *separator, *suffix;
     constructSubsessionURL(subsession, prefix, separator, suffix);
     if (hackForDSS) {
@@ -903,7 +996,7 @@ Boolean RTSPClient::playMediaSubsession(MediaSubsession& subsession,
       + strlen(prefix) + strlen(separator) + strlen(suffix)
       + 20 /* max int len */
       + strlen(subsession.sessionId)
-      + strlen(startStr) + strlen(endStr)
+      + strlen(rangeStr)
       + strlen(authenticatorStr)
       + fUserAgentHeaderStrSize;
     cmd = new char[cmdSize];
@@ -911,9 +1004,10 @@ Boolean RTSPClient::playMediaSubsession(MediaSubsession& subsession,
 	    prefix, separator, suffix,
 	    ++fCSeq,
 	    subsession.sessionId,
-	    startStr, endStr,
+	    rangeStr,
 	    authenticatorStr,
 	    fUserAgentHeaderStr);
+    delete[] rangeStr;
     delete[] authenticatorStr;
 
     if (!sendRequest(cmd)) {
@@ -985,9 +1079,9 @@ Boolean RTSPClient::pauseMediaSession(MediaSession& session) {
       "PAUSE %s RTSP/1.0\r\n"
       "CSeq: %d\r\n"
       "Session: %s\r\n"
-      "Range: npt=0-\r\n"
       "%s"
-      "%s\r\n";
+      "%s"
+      "\r\n";
 
     unsigned cmdSize = strlen(cmdFmt)
       + strlen(fBaseURL)
@@ -1057,7 +1151,8 @@ Boolean RTSPClient::pauseMediaSubsession(MediaSubsession& subsession) {
       "CSeq: %d\r\n"
       "Session: %s\r\n"
       "%s"
-      "%s\r\n";
+      "%s"
+      "\r\n";
     
     char const *prefix, *separator, *suffix;
     constructSubsessionURL(subsession, prefix, separator, suffix);
@@ -1131,7 +1226,8 @@ Boolean RTSPClient::recordMediaSubsession(MediaSubsession& subsession) {
       "Session: %s\r\n"
       "Range: npt=0-\r\n"
       "%s"
-      "%s\r\n";
+      "%s"
+      "\r\n";
 
     char const *prefix, *separator, *suffix;
     constructSubsessionURL(subsession, prefix, separator, suffix);
@@ -1184,6 +1280,83 @@ Boolean RTSPClient::recordMediaSubsession(MediaSubsession& subsession) {
   return False;
 }
 
+Boolean RTSPClient::setMediaSessionParameter(MediaSession& session,
+					     char const* parameterName,
+					     char const* parameterValue) {
+  char* cmd = NULL;
+  do {
+    // First, make sure that we have a RTSP session in progreee
+    if (fLastSessionId == NULL) {
+      envir().setResultMsg("No RTSP session is currently in progress\n");
+      break;
+    }
+
+    // Send the SET_PARAMETER command:
+
+    // First, construct an authenticator string:
+    char* authenticatorStr
+      = createAuthenticatorString(fCurrentAuthenticator,
+				  "SET_PARAMETER", fBaseURL);
+
+    char* const cmdFmt =
+      "SET_PARAMETER %s RTSP/1.0\r\n"
+      "CSeq: %d\r\n"
+      "Session: %s\r\n"
+      "%s"
+      "%s"
+      "%s: %s\r\n"
+      "\r\n";
+
+    unsigned cmdSize = strlen(cmdFmt)
+      + strlen(fBaseURL)
+      + 20 /* max int len */
+      + strlen(fLastSessionId)
+      + strlen(authenticatorStr)
+      + fUserAgentHeaderStrSize
+      + strlen(parameterName) + strlen(parameterValue);
+    cmd = new char[cmdSize];
+    sprintf(cmd, cmdFmt,
+	    fBaseURL,
+	    ++fCSeq,
+	    fLastSessionId,
+	    authenticatorStr,
+	    fUserAgentHeaderStr,
+	    parameterName, parameterValue);
+    delete[] authenticatorStr;
+
+    if (!sendRequest(cmd)) {
+      envir().setResultErrMsg("SET_PARAMETER send() failed: ");
+      break;
+    }
+
+    // Get the response from the server:
+    unsigned const readBufSize = 10000;
+    char readBuffer[readBufSize+1]; char* readBuf = readBuffer;
+    unsigned bytesRead = getResponse(readBuf, readBufSize);
+    if (bytesRead == 0) break;
+    if (fVerbosityLevel >= 1) {
+      envir() << "Received SET_PARAMETER response: " << readBuf << "\n";
+    }
+
+    // Inspect the first line to check whether it's a result code 200
+    char* firstLine = readBuf;
+    /*char* nextLineStart =*/ getLine(firstLine);
+    unsigned responseCode;
+    if (!parseResponseCode(firstLine, responseCode)) break;
+    if (responseCode != 200) {
+      envir().setResultMsg("cannot handle SET_PARAMETER response: ", firstLine);
+      break;
+    }
+    // (Later, check "CSeq" too #####)
+
+    delete[] cmd;
+    return True;
+  } while (0);
+
+  delete[] cmd;
+  return False;
+}
+
 Boolean RTSPClient::teardownMediaSession(MediaSession& session) {
   char* cmd = NULL;
   do {
@@ -1205,7 +1378,8 @@ Boolean RTSPClient::teardownMediaSession(MediaSession& session) {
       "CSeq: %d\r\n"
       "Session: %s\r\n"
       "%s"
-      "%s\r\n";
+      "%s"
+      "\r\n";
 
     unsigned cmdSize = strlen(cmdFmt)
       + strlen(fBaseURL)
@@ -1279,7 +1453,8 @@ Boolean RTSPClient::teardownMediaSubsession(MediaSubsession& subsession) {
       "CSeq: %d\r\n"
       "Session: %s\r\n"
       "%s"
-      "%s\r\n";
+      "%s"
+      "\r\n";
 
     char const *prefix, *separator, *suffix;
     constructSubsessionURL(subsession, prefix, separator, suffix);

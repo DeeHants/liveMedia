@@ -26,6 +26,13 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #endif
 
 class MPEG1or2DemuxedElementaryStream: public FramedSource {
+public:
+  struct SCR {
+    u_int8_t highBit;
+    u_int32_t remainingBits;
+    u_int16_t extension;
+  } lastSeenSCR;
+
 private: // We are created only by a MPEG1or2Demux (a friend)
   MPEG1or2DemuxedElementaryStream(UsageEnvironment& env,
 			      u_int8_t streamIdTag,
@@ -44,6 +51,10 @@ private:
 				unsigned frameSize, unsigned numTruncatedBytes,
 				struct timeval presentationTime,
 				unsigned durationInMicroseconds);
+
+  void afterGettingFrame1(unsigned frameSize, unsigned numTruncatedBytes,
+			  struct timeval presentationTime,
+			  unsigned durationInMicroseconds);
 
 private:
   u_int8_t fOurStreamIdTag;

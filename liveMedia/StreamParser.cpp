@@ -23,6 +23,8 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include <string.h>
 #include <stdlib.h>
 
+#define BANK_SIZE 150000
+
 StreamParser::StreamParser(FramedSource* inputSource,
 			   FramedSource::onCloseFunc* onInputCloseFunc,
 			   void* onInputCloseClientData,
@@ -32,12 +34,16 @@ StreamParser::StreamParser(FramedSource* inputSource,
     fOnInputCloseClientData(onInputCloseClientData),
     fClientContinueFunc(clientContinueFunc),
     fClientContinueClientData(clientContinueClientData),
-    fCurBankNum(0), fCurBank(fBank[0]),
     fSavedParserIndex(0), fCurParserIndex(0), fRemainingUnparsedBits(0),
     fTotNumValidBytes(0) {
+  fBank[0] = new unsigned char[BANK_SIZE];
+  fBank[1] = new unsigned char[BANK_SIZE];
+  fCurBankNum = 0;
+  fCurBank = fBank[fCurBankNum];
 }
 
 StreamParser::~StreamParser() {
+  delete[] fBank[0]; delete[] fBank[1];
 }
 
 #define NO_MORE_BUFFERED_INPUT 1
@@ -88,13 +94,12 @@ void StreamParser::ensureValidBytes1(unsigned numBytesNeeded) {
 void StreamParser::afterGettingBytes(void* clientData,
 				     unsigned numBytesRead,
 				     unsigned /*numTruncatedBytes*/,
-				     struct timeval /*presentationTime*/,
+				     struct timeval presentationTime,
 				     unsigned /*durationInMicroseconds*/){
   StreamParser* buffer = (StreamParser*)clientData;
 
   // Sanity check: Make sure we didn't get too many bytes for our bank:
   if (buffer->fTotNumValidBytes + numBytesRead > BANK_SIZE) {
-    numBytesRead = BANK_SIZE - buffer->fTotNumValidBytes;
     buffer->fInputSource->envir()
       << "StreamParser::afterGettingBytes() warning: read "
       << numBytesRead << " bytes; expected no more than "
@@ -109,7 +114,7 @@ void StreamParser::afterGettingBytes(void* clientData,
       // Sigh... this is a crock; things would have been a lot simpler
       // here if we were using threads, with synchronous I/O...
   buffer->fClientContinueFunc(buffer->fClientContinueClientData,
-			      ptr, numBytesRead);
+			      ptr, numBytesRead, presentationTime);
 }
 
 void StreamParser::saveParserState() {

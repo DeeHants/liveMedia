@@ -13,7 +13,7 @@ You should have received a copy of the GNU Lesser General Public License
 along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
-// Copyright (c) 1996-2003, Live Networks, Inc.  All rights reserved
+// Copyright (c) 1996-2004, Live Networks, Inc.  All rights reserved
 // A test program that streams a WAV audio file via RTP/RTCP
 // main program
 
@@ -90,10 +90,10 @@ void play() {
   unsigned char payloadFormatCode;
   if (bitsPerSample == 16) {
 #ifdef CONVERT_TO_ULAW
-    // Add a filter that converts from raw 16-bit PCM audio
+    // Add a filter that converts from raw 16-bit PCM audio (in little-endian order)
     // to 8-bit u-law audio:
     sessionState.source
-      = uLawFromPCMAudioSource::createNew(*env, pcmSource);
+      = uLawFromPCMAudioSource::createNew(*env, pcmSource, 1/*little-endian*/);
     if (sessionState.source == NULL) {
       *env << "Unable to create a u-law filter from the PCM audio source: "
 	   << env->getResultMsg() << "\n";
@@ -109,11 +109,11 @@ void play() {
     *env << "Converting to 8-bit u-law audio for streaming => "
 	 << bitsPerSecond << " bits-per-second\n";
 #else
-    // Add a filter that converts from host to network order: 
-    sessionState.source
-      = NetworkFromHostOrder16::createNew(*env, pcmSource);
+    // The 16-bit samples in WAV files are in little-endian order.
+    // Add a filter that converts them to network (i.e., big-endian) order:
+    sessionState.source = EndianSwap16::createNew(*env, pcmSource);
     if (sessionState.source == NULL) {
-      *env << "Unable to create a host->network order filter from the PCM audio source: "
+      *env << "Unable to create a little->bit-endian order filter from the PCM audio source: "
 	   << env->getResultMsg() << "\n";
       exit(1);
     }
@@ -162,7 +162,7 @@ void play() {
 			       "audio", mimeType, numChannels);
   
   // Create (and start) a 'RTCP instance' for this RTP sink:
-  const unsigned totalSessionBandwidth = bitsPerSecond/1000;
+  const unsigned estimatedSessionBandwidth = bitsPerSecond/1000;
       // in kbps; for RTCP b/w share
   const unsigned maxCNAMElen = 100;
   unsigned char CNAME[maxCNAMElen+1];
@@ -170,7 +170,7 @@ void play() {
   CNAME[maxCNAMElen] = '\0'; // just in case
   sessionState.rtcpInstance
     = RTCPInstance::createNew(*env, sessionState.rtcpGroupsock,
-			      totalSessionBandwidth, CNAME,
+			      estimatedSessionBandwidth, CNAME,
 			      sessionState.sink, NULL /* we're a server */,
 			      True /* we're a SSM source*/);
   // Note: This starts RTCP running automatically

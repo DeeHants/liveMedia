@@ -13,7 +13,7 @@ You should have received a copy of the GNU Lesser General Public License
 along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
-// Copyright (c) 1996-2003, Live Networks, Inc.  All rights reserved
+// Copyright (c) 1996-2004, Live Networks, Inc.  All rights reserved
 // A test program that reads a MPEG-1 or 2 Video Elementary Stream file,
 // and streams it using RTP
 // main program
@@ -88,7 +88,7 @@ int main(int argc, char** argv) {
   videoSink = MPEG1or2VideoRTPSink::createNew(*env, &rtpGroupsock);
 
   // Create (and start) a 'RTCP instance' for this RTP sink:
-  const unsigned totalSessionBandwidth = 4500; // in kbps; for RTCP b/w share
+  const unsigned estimatedSessionBandwidth = 4500; // in kbps; for RTCP b/w share
   const unsigned maxCNAMElen = 100;
   unsigned char CNAME[maxCNAMElen+1];
   gethostname((char*)CNAME, maxCNAMElen);
@@ -97,7 +97,7 @@ int main(int argc, char** argv) {
   RTCPInstance* rtcp =
 #endif
     RTCPInstance::createNew(*env, &rtcpGroupsock,
-			      totalSessionBandwidth, CNAME,
+			      estimatedSessionBandwidth, CNAME,
 			      videoSink, NULL /* we're a server */, isSSM);
   // Note: This starts RTCP running automatically
 

@@ -194,10 +194,10 @@ void MultiFramedRTPSink
       = (frameSize + numTruncatedBytes + (maxPacketSize-1)) / maxPacketSize;
     envir() << "MultiFramedRTPSink::afterGettingFrame1(): The input frame data was too large for our buffer size ("
 	    << bufferSize << ").  "
-	    << numTruncatedBytes << " of trailing data was dropped!  Correct this by increasing \"OutPacketBuffer::numPacketsLimit\" to at least "
-	    << newNumPacketsLimit << " (current value: "
+	    << numTruncatedBytes << " bytes of trailing data was dropped!  Correct this by increasing \"OutPacketBuffer::numPacketsLimit\" to at least "
+	    << newNumPacketsLimit << ", *before* creating this 'RTPSink'.  (Current value is "
 	    << OutPacketBuffer::numPacketsLimit
-	    << ").\n";
+	    << ".)\n";
   }
   unsigned curFragmentationOffset = fCurFragmentationOffset;
   unsigned numFrameBytesToUse = frameSize;

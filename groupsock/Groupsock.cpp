@@ -23,13 +23,15 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 //##### Eventually fix the following #include; we shouldn't know about tunnels
 #include "TunnelEncaps.hh"
 
-#if defined(__WIN32__) || defined(_WIN32)
+#ifndef NO_STRSTREAM
+#if (defined(__WIN32__) || defined(_WIN32)) && !defined(__MINGW32__)
 #include <strstrea.h>
 #else
 #if defined(__GNUC__) && (__GNUC__ > 3 || __GNUC__ == 3 && __GNUC_MINOR__ > 0)
 #include <strstream>
 #else
 #include <strstream.h>
+#endif
 #endif
 #endif
 #include <stdio.h>
@@ -413,6 +415,12 @@ static Boolean unsetGroupsockBySocket(Groupsock const* groupsock) {
     if (gs == NULL || gs != groupsock) break;
     sockets->Remove((char*)(long)sock);
     
+    if (sockets->IsEmpty()) {
+      // We can also delete the table (to reclaim space):
+      delete sockets;
+      (gs->env()).groupsockPriv = NULL;
+    }
+
     return True;
   } while (0);
   

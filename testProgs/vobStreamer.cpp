@@ -13,7 +13,7 @@ You should have received a copy of the GNU Lesser General Public License
 along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
-// Copyright (c) 1996-2003, Live Networks, Inc.  All rights reserved
+// Copyright (c) 1996-2004, Live Networks, Inc.  All rights reserved
 // A test program that reads a VOB file
 // splits it into Audio (AC3) and Video (MPEG) Elementary Streams,
 // and streams both using RTP.
@@ -160,10 +160,10 @@ int main(int argc, char const** argv) {
     rtcpGroupsockAudio
       = new Groupsock(*env, destinationAddress, rtcpPortAudio, ttl);
     rtcpGroupsockAudio->multicastSendOnly(); // because we're a SSM source
-    const unsigned totalSessionBandwidthAudio
+    const unsigned estimatedSessionBandwidthAudio
       = 160; // in kbps; for RTCP b/w share
     audioRTCP = RTCPInstance::createNew(*env, rtcpGroupsockAudio,
-					totalSessionBandwidthAudio, CNAME,
+					estimatedSessionBandwidthAudio, CNAME,
 					audioSink, NULL /* we're a server */,
 					True /* we're a SSM source */);
     // Note: This starts RTCP running automatically
@@ -181,10 +181,10 @@ int main(int argc, char const** argv) {
     rtcpGroupsockVideo
       = new Groupsock(*env, destinationAddress, rtcpPortVideo, ttl);
     rtcpGroupsockVideo->multicastSendOnly(); // because we're a SSM source
-    const unsigned totalSessionBandwidthVideo
+    const unsigned estimatedSessionBandwidthVideo
       = 4500; // in kbps; for RTCP b/w share
     videoRTCP = RTCPInstance::createNew(*env, rtcpGroupsockVideo,
-					totalSessionBandwidthVideo, CNAME,
+					estimatedSessionBandwidthVideo, CNAME,
 					videoSink, NULL /* we're a server */,
 					True /* we're a SSM source */);
     // Note: This starts RTCP running automatically

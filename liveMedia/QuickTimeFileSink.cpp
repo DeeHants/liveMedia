@@ -18,16 +18,19 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 // A sink that generates a QuickTime file from a composite media session
 // Implementation
 
-#if defined(__WIN32__) || defined(_WIN32)
+#if (defined(__WIN32__) || defined(_WIN32)) && !defined(_WIN32_WCE)
 #include <io.h>
 #include <fcntl.h>
 #endif
-#include <ctype.h>
 
 #include "QuickTimeFileSink.hh"
 #include "QuickTimeGenericRTPSource.hh"
 #include "GroupsockHelper.hh"
-#include "H263plusVideoRTPSource.hh"
+#include "H263plusVideoRTPSource.hh" // for the special header
+#include "MPEG4GenericRTPSource.hh" //for "samplingFrequencyFromAudioSpecificConfig()"
+#include "MPEG4LATMAudioRTPSource.hh" // for "parseGeneralConfigStr()"
+
+#include <ctype.h>
 
 #define fourChar(x,y,z,w) ( ((x)<<24)|((y)<<16)|((z)<<8)|(w) )
 
@@ -57,14 +60,19 @@ public:
 
 class SubsessionBuffer {
 public:
-  SubsessionBuffer() { reset(); }
+  SubsessionBuffer(unsigned bufferSize)
+    : fBufferSize(bufferSize) {
+    reset();
+    fData = new unsigned char[bufferSize];
+  }
+  virtual ~SubsessionBuffer() { delete fData; }
   void reset() { fBytesInUse = 0; }
   void addBytes(unsigned numBytes) { fBytesInUse += numBytes; }
 
   unsigned char* dataStart() { return &fData[0]; }
   unsigned char* dataEnd() { return &fData[fBytesInUse]; }
   unsigned bytesInUse() const { return fBytesInUse; }
-  unsigned bytesAvailable() const { return sizeof fData - fBytesInUse; }
+  unsigned bytesAvailable() const { return fBufferSize - fBytesInUse; }
   
   void setPresentationTime(struct timeval const& presentationTime) {
     fPresentationTime = presentationTime;
@@ -72,8 +80,9 @@ public:
   struct timeval const& presentationTime() const {return fPresentationTime;}
 
 private:
+  unsigned fBufferSize;
   struct timeval fPresentationTime;
-  unsigned char fData[20000];
+  unsigned char* fData;
   unsigned fBytesInUse;
 };
 
@@ -185,8 +194,9 @@ private:
 
     // The remaining fields are used for hint tracks only:
     unsigned startSampleNumber;
+    unsigned short seqNum;
     unsigned rtpHeader;
-    unsigned char numSpecialHeaders; // used when our RTP source is H.263+
+    unsigned char numSpecialHeaders; // used when our RTP source has special headers
     unsigned specialHeaderBytesLength; // ditto
     unsigned char specialHeaderBytes[SPECIAL_HEADER_BUFFER_SIZE]; // ditto
     unsigned packetSizes[256];
@@ -205,6 +215,7 @@ static int Idunno;
 QuickTimeFileSink::QuickTimeFileSink(UsageEnvironment& env,
 				     MediaSession& inputSession,
 				     FILE* outFid,
+				     unsigned bufferSize,
 				     unsigned short movieWidth,
 				     unsigned short movieHeight,
 				     unsigned movieFPS,
@@ -212,7 +223,7 @@ QuickTimeFileSink::QuickTimeFileSink(UsageEnvironment& env,
 				     Boolean syncStreams,
 				     Boolean generateHintTracks)
   : Medium(env), fInputSession(inputSession), fOutFid(outFid),
-    fPacketLossCompensate(packetLossCompensate),
+    fBufferSize(bufferSize), fPacketLossCompensate(packetLossCompensate),
     fSyncStreams(syncStreams), fAreCurrentlyBeingPlayed(False),
     fLargestRTPtimestampFrequency(0),
     fNumSubsessions(0), fNumSyncedSubsessions(0),
@@ -312,6 +323,7 @@ QuickTimeFileSink*
 QuickTimeFileSink::createNew(UsageEnvironment& env,
 			     MediaSession& inputSession,
 			     char const* outputFileName,
+			     unsigned bufferSize,
 			     unsigned short movieWidth,
 			     unsigned short movieHeight,
 			     unsigned movieFPS,
@@ -324,7 +336,7 @@ QuickTimeFileSink::createNew(UsageEnvironment& env,
     FILE* fid = openFileByName(env, outputFileName);
     if (fid == NULL) break;
 
-    return new QuickTimeFileSink(env, inputSession, fid,
+    return new QuickTimeFileSink(env, inputSession, fid, bufferSize,
 				 movieWidth, movieHeight, movieFPS,
 				 packetLossCompensate, syncStreams,
 				 generateHintTracks);
@@ -530,14 +542,16 @@ SubsessionIOState::SubsessionIOState(QuickTimeFileSink& sink,
     fHeadChunk(NULL), fTailChunk(NULL), fNumChunks(0) {
   fTrackID = ++fCurrentTrackNumber;
 
-  fBuffer = new SubsessionBuffer;
-  fPrevBuffer = sink.fPacketLossCompensate ? new SubsessionBuffer : NULL;
+  fBuffer = new SubsessionBuffer(fOurSink.fBufferSize);
+  fPrevBuffer = sink.fPacketLossCompensate
+    ? new SubsessionBuffer(fOurSink.fBufferSize) : NULL;
 
   FramedSource* subsessionSource = subsession.readSource();
   fOurSourceIsActive = subsessionSource != NULL;
 
   fPrevFrameState.presentationTime.tv_sec = 0;
   fPrevFrameState.presentationTime.tv_usec = 0;
+  fPrevFrameState.seqNum = 0;
 }
 
 SubsessionIOState::~SubsessionIOState() {
@@ -593,6 +607,14 @@ Boolean SubsessionIOState::setQTstate() {
       } else if (strcmp(fOurSubsession.codecName(), "QCELP") == 0) {
 	fQTMediaDataAtomCreator = &QuickTimeFileSink::addAtom_Qclp;
 	fQTSamplesPerFrame = 160;
+      } else if (strcmp(fOurSubsession.codecName(), "MPEG4-GENERIC") == 0) {
+	fQTMediaDataAtomCreator = &QuickTimeFileSink::addAtom_mp4a;
+	fQTTimeUnitsPerSample = 1024; // QT considers each frame to be a 'sample'
+	// The time scale (frequency) comes from the 'config' information.
+	// It might be different from the RTP timestamp frequency (e.g., aacPlus).
+	unsigned frequencyFromConfig
+	  = samplingFrequencyFromAudioSpecificConfig(fOurSubsession.fmtp_config());
+	if (frequencyFromConfig != 0) fQTTimeScale = frequencyFromConfig;
       } else {
 	envir() << noCodecWarning1 << "Audio" << noCodecWarning2
 		<< fOurSubsession.codecName() << noCodecWarning3;
@@ -611,6 +633,10 @@ Boolean SubsessionIOState::setQTstate() {
       } else if (strcmp(fOurSubsession.codecName(), "H263-1998") == 0 ||
 		 strcmp(fOurSubsession.codecName(), "H263-2000") == 0) {
 	fQTMediaDataAtomCreator = &QuickTimeFileSink::addAtom_h263;
+	fQTTimeScale = 600;
+	fQTTimeUnitsPerSample = fQTTimeScale/fOurSink.fMovieFPS;
+      } else if (strcmp(fOurSubsession.codecName(), "MP4V-ES") == 0) {
+	fQTMediaDataAtomCreator = &QuickTimeFileSink::addAtom_mp4v;
 	fQTTimeScale = 600;
 	fQTTimeUnitsPerSample = fQTTimeScale/fOurSink.fMovieFPS;
       } else {
@@ -811,14 +837,14 @@ void SubsessionIOState::useFrame(SubsessionBuffer& buffer) {
 void SubsessionIOState::useFrameForHinting(unsigned frameSize,
 					   struct timeval presentationTime,
 					   unsigned startSampleNumber) {
-  // Normally, assume that each frame has just a single RTP packet.
-  // This simplifies the hinting code, even though it might not be
-  // true in practice.  (Instead of multiple RTP packets, we'll get
-  // a single, large RTP packet that may get fragmented at the IP level.)
-  // However, if the source is H.263+, then we need to break the frame
-  // back into separate RTP packets, because we want to reuse the special
+  // At this point, we have a single, combined frame - not individual packets.
+  // For the hint track, we need to split the frame back up into separate packets.
+  // However, for some RTP sources, then we also need to reuse the special
   // header bytes that were at the start of each of the RTP packets.
   Boolean hack263 = strcmp(fOurSubsession.codecName(), "H263-1998") == 0;
+  Boolean hackm4a = strcmp(fOurSubsession.mediumName(), "audio") == 0
+    && strcmp(fOurSubsession.codecName(), "MPEG4-GENERIC") == 0;
+  Boolean haveSpecialHeaders = (hack263 || hackm4a);
 
   // If there has been a previous frame, then output a 'hint sample' for it.
   // (We use the current frame's presentation time to compute the previous
@@ -833,13 +859,30 @@ void SubsessionIOState::useFrameForHinting(unsigned frameSize,
     if (msDuration > fHINF.dmax) fHINF.dmax = msDuration;
     unsigned hintSampleDuration
       = (unsigned)((2*duration*fQTTimeScale+1)/2); // round
+    if (hackm4a) {
+      // Because multiple AAC frames can appear in a RTP packet, the presentation
+      // times of the second and subsequent frames will not be accurate.
+      // So, use the known "hintSampleDuration" instead:
+      hintSampleDuration = fTrackHintedByUs->fQTTimeUnitsPerSample;
+
+      // Also, if the 'time scale' was different from the RTP timestamp frequency,
+      // (as can happen with aacPlus), then we need to scale "hintSampleDuration"
+      // accordingly:
+      if (fTrackHintedByUs->fQTTimeScale != fOurSubsession.rtpTimestampFrequency()) {
+	unsigned const scalingFactor
+	  = fOurSubsession.rtpTimestampFrequency()/fTrackHintedByUs->fQTTimeScale ;
+	hintSampleDuration *= scalingFactor;
+      }
+    }
 
     unsigned const hintSampleDestFileOffset = ftell(fOurSink.fOutFid);
 
-    unsigned short numPTEntries = 1; // normal case
+    unsigned const maxPacketSize = 1450;
+    unsigned short numPTEntries
+      = (fPrevFrameState.frameSize + (maxPacketSize-1))/maxPacketSize; // normal case
     unsigned char* immediateDataPtr = NULL;
     unsigned immediateDataBytesRemaining = 0;
-    if (hack263) { // special case
+    if (haveSpecialHeaders) { // special case
       numPTEntries = fPrevFrameState.numSpecialHeaders;
       immediateDataPtr = fPrevFrameState.specialHeaderBytes;
       immediateDataBytesRemaining
@@ -853,47 +896,53 @@ void SubsessionIOState::useFrameForHinting(unsigned frameSize,
     for (unsigned i = 0; i < numPTEntries; ++i) {
       // Output a Packet Table entry (representing a single RTP packet):
       unsigned short numDTEntries = 1;
+      unsigned short seqNum = fPrevFrameState.seqNum++;
+          // Note: This assumes that the input stream had no packets lost #####
       unsigned rtpHeader = fPrevFrameState.rtpHeader;
-      unsigned dataFrameSize = fPrevFrameState.frameSize;
+      if (i+1 < numPTEntries) {
+	// This is not the last RTP packet, so clear the marker bit:
+	rtpHeader &=~ (1<<23);
+      }
+      unsigned dataFrameSize = (i+1 < numPTEntries)
+	? maxPacketSize : fPrevFrameState.frameSize - i*maxPacketSize; // normal case
       unsigned sampleNumber = fPrevFrameState.startSampleNumber;
 
       unsigned char immediateDataLen = 0;
-      if (hack263) {
+      if (haveSpecialHeaders) { // special case
 	++numDTEntries; // to include a Data Table entry for the special hdr
 	if (immediateDataBytesRemaining > 0) {
-	  immediateDataLen = *immediateDataPtr++;
-	  --immediateDataBytesRemaining;
-	  if (immediateDataLen > immediateDataBytesRemaining) {
-	    // shouldn't happen (length byte was bad)
-	    immediateDataLen = immediateDataBytesRemaining;
+	  if (hack263) {
+	    immediateDataLen = *immediateDataPtr++;
+	    --immediateDataBytesRemaining;
+	    if (immediateDataLen > immediateDataBytesRemaining) {
+	      // shouldn't happen (length byte was bad)
+	      immediateDataLen = immediateDataBytesRemaining;
+	    }
+	  } else {
+	    immediateDataLen = fPrevFrameState.specialHeaderBytesLength;
 	  }
 	}
-	dataFrameSize
-	  = fPrevFrameState.packetSizes[i] - immediateDataLen;
+	dataFrameSize = fPrevFrameState.packetSizes[i] - immediateDataLen;
 
-	Boolean PbitSet
-	  = immediateDataLen >= 1 && (immediateDataPtr[0]&0x4) != 0;
-	if (PbitSet) {
-	  offsetWithinSample += 2; // to omit the two leading 0 bytes
-	}
-
-	if (i+1 < numPTEntries) {
-	  // This is not the last RTP packet, so clear the marker bit:
-	  rtpHeader &=~ (1<<23);
+	if (hack263) {
+	  Boolean PbitSet
+	    = immediateDataLen >= 1 && (immediateDataPtr[0]&0x4) != 0;
+	  if (PbitSet) {
+	    offsetWithinSample += 2; // to omit the two leading 0 bytes
+	  }
 	}
       }
 
       // Output the Packet Table:
       hintSampleSize += fOurSink.addWord(0); // Relative transmission time
-      unsigned seqNumBehind = numPTEntries - 1 - i;
-      hintSampleSize += fOurSink.addWord(rtpHeader - seqNumBehind);
-          // RTP header info + RTP sequence number (modified by packet #)
+      hintSampleSize += fOurSink.addWord(rtpHeader|seqNum);
+          // RTP header info + RTP sequence number
       hintSampleSize += fOurSink.addHalfWord(0x0000); // Flags
       hintSampleSize += fOurSink.addHalfWord(numDTEntries); // Entry count
       unsigned totalPacketSize = 0;
 
       // Output the Data Table:
-      if (hack263) {
+      if (haveSpecialHeaders) {
 	//   use the "Immediate Data" format (1):
 	hintSampleSize += fOurSink.addByte(1); // Source
 	unsigned char len = immediateDataLen > 14 ? 14 : immediateDataLen;
@@ -946,21 +995,35 @@ void SubsessionIOState::useFrameForHinting(unsigned frameSize,
   fPrevFrameState.startSampleNumber = startSampleNumber;
   fPrevFrameState.rtpHeader
     = rs->curPacketMarkerBit()<<23
-    | (rs->rtpPayloadFormat()&0x7F)<<16
-    | rs->curPacketRTPSeqNum();
+    | (rs->rtpPayloadFormat()&0x7F)<<16;
   if (hack263) {
-      H263plusVideoRTPSource* rs_263 = (H263plusVideoRTPSource*)rs;
-      fPrevFrameState.numSpecialHeaders = rs_263->fNumSpecialHeaders;
-      fPrevFrameState.specialHeaderBytesLength
-	= rs_263->fSpecialHeaderBytesLength;
-      unsigned i;
-      for (i = 0; i < rs_263->fSpecialHeaderBytesLength; ++i) {
-	fPrevFrameState.specialHeaderBytes[i]
-	  = rs_263->fSpecialHeaderBytes[i];
-      }
-      for (i = 0; i < rs_263->fNumSpecialHeaders; ++i) {
-	fPrevFrameState.packetSizes[i] = rs_263->fPacketSizes[i];
-      }
+    H263plusVideoRTPSource* rs_263 = (H263plusVideoRTPSource*)rs;
+    fPrevFrameState.numSpecialHeaders = rs_263->fNumSpecialHeaders;
+    fPrevFrameState.specialHeaderBytesLength = rs_263->fSpecialHeaderBytesLength;
+    unsigned i;
+    for (i = 0; i < rs_263->fSpecialHeaderBytesLength; ++i) {
+      fPrevFrameState.specialHeaderBytes[i] = rs_263->fSpecialHeaderBytes[i];
+    }
+    for (i = 0; i < rs_263->fNumSpecialHeaders; ++i) {
+      fPrevFrameState.packetSizes[i] = rs_263->fPacketSizes[i];
+    }
+  } else if (hackm4a) {
+    // Synthesize a special header, so that this frame can be in its own RTP packet.
+    unsigned const sizeLength = fOurSubsession.fmtp_sizelength();
+    unsigned const indexLength = fOurSubsession.fmtp_indexlength();
+    if (sizeLength + indexLength != 16) {
+      envir() << "Warning: unexpected 'sizeLength' " << sizeLength
+	      << " and 'indexLength' " << indexLength
+	      << "seen when creating hint track\n";
+    }
+    fPrevFrameState.numSpecialHeaders = 1;
+    fPrevFrameState.specialHeaderBytesLength = 4;
+    fPrevFrameState.specialHeaderBytes[0] = 0; // AU_headers_length (high byte)
+    fPrevFrameState.specialHeaderBytes[1] = 16; // AU_headers_length (low byte)
+    fPrevFrameState.specialHeaderBytes[2] = ((frameSize<<indexLength)&0xFF00)>>8;
+    fPrevFrameState.specialHeaderBytes[3] = (frameSize<<indexLength);
+    fPrevFrameState.packetSizes[0]
+      = fPrevFrameState.specialHeaderBytesLength + frameSize;
   }
 }
 
@@ -1528,23 +1591,17 @@ unsigned QuickTimeFileSink::addAtom_soundMediaGeneral() {
     = (unsigned short)(fCurrentIOState->fOurSubsession.numChannels());
   size += addHalfWord(numChannels); // Number of channels
   size += addHalfWord(0x0010); // Sample size
-  size += addWord(0x00000000); // Compression ID+Packet size
+  //  size += addWord(0x00000000); // Compression ID+Packet size
+  size += addWord(0xfffe0000); // Compression ID+Packet size #####
 
-  unsigned const timeScale = fCurrentIOState->fQTTimeScale;
-  unsigned const timeUnitsPerSample
-    = fCurrentIOState->fQTTimeUnitsPerSample;
-  double const sampleRate = timeScale/(double)timeUnitsPerSample;
-  unsigned const sampleRateIntPart = (unsigned)sampleRate;
-  unsigned const sampleRateFracPart = (unsigned)(sampleRate*65536);
-  unsigned const sampleRateFixedPoint
-    = (sampleRateIntPart<<16) | sampleRateFracPart;
+  unsigned const sampleRateFixedPoint = fCurrentIOState->fQTTimeScale << 16;
   size += addWord(sampleRateFixedPoint); // Sample rate
 addAtomEnd;
 
 unsigned QuickTimeFileSink::addAtom_Qclp() {
   // The beginning of this atom looks just like a general Sound Media atom,
   // except with a version field of 1:
-  unsigned initFilePosn = ftell(fOutFid); \
+  unsigned initFilePosn = ftell(fOutFid);
   fCurrentIOState->fQTAudioDataType = "Qclp";
   fCurrentIOState->fQTSoundSampleVersion = 1;
   unsigned size = addAtom_soundMediaGeneral();
@@ -1552,8 +1609,8 @@ unsigned QuickTimeFileSink::addAtom_Qclp() {
   // Next, add the four fields that are particular to version 1:
   // (Later, parameterize these #####)
   size += addWord(0x000000a0); // samples per packet
-  size += addWord(fCurrentIOState->fQTBytesPerFrame); // bytes per packet
-  size += addWord(fCurrentIOState->fQTBytesPerFrame); // bytes per frame
+  size += addWord(0x00000000); // ???
+  size += addWord(0x00000000); // ???
   size += addWord(0x00000002); // bytes per sample (uncompressed)
 
   // Other special fields are in a 'wave' atom that follows:
@@ -1562,21 +1619,30 @@ addAtomEnd;
 
 addAtom(wave);
   size += addAtom_frma();
-  size += addWord(0x00000014); // ???
-  size += add4ByteString("Qclp"); // ???
-  if (fCurrentIOState->fQTBytesPerFrame == 35) {
-    size += addAtom_Fclp(); // full-rate QCELP
-  } else {
-    size += addAtom_Hclp(); // half-rate QCELP
-  } // what about other QCELP 'rates'??? #####
-  size += addWord(0x00000008); // ???
-  size += addWord(0x00000000); // ???
-  size += addWord(0x00000000); // ???
-  size += addWord(0x00000008); // ???
+  if (strcmp(fCurrentIOState->fQTAudioDataType, "Qclp") == 0) {
+    size += addWord(0x00000014); // ???
+    size += add4ByteString("Qclp"); // ???
+    if (fCurrentIOState->fQTBytesPerFrame == 35) {
+      size += addAtom_Fclp(); // full-rate QCELP
+    } else {
+      size += addAtom_Hclp(); // half-rate QCELP
+    } // what about other QCELP 'rates'??? #####
+    size += addWord(0x00000008); // ???
+    size += addWord(0x00000000); // ???
+    size += addWord(0x00000000); // ???
+    size += addWord(0x00000008); // ???
+  } else if (strcmp(fCurrentIOState->fQTAudioDataType, "mp4a") == 0) {
+    size += addWord(0x0000000c); // ???
+    size += add4ByteString("mp4a"); // ???
+    size += addWord(0x00000000); // ???
+    size += addAtom_esds(); // ESDescriptor
+    size += addWord(0x00000008); // ???
+    size += addWord(0x00000000); // ???
+  }
 addAtomEnd;
 
 addAtom(frma);
-  size += add4ByteString("Qclp"); // ???
+  size += add4ByteString(fCurrentIOState->fQTAudioDataType); // ???
 addAtomEnd;
 
 addAtom(Fclp);
@@ -1585,6 +1651,78 @@ addAtomEnd;
 
 addAtom(Hclp);
  size += addWord(0x00000000); // ???
+addAtomEnd;
+
+unsigned QuickTimeFileSink::addAtom_mp4a() {
+  // The beginning of this atom looks just like a general Sound Media atom,
+  // except with a version field of 1:
+  unsigned initFilePosn = ftell(fOutFid);
+  fCurrentIOState->fQTAudioDataType = "mp4a";
+  fCurrentIOState->fQTSoundSampleVersion = 1;
+  unsigned size = addAtom_soundMediaGeneral();
+
+  // Next, add the four fields that are particular to version 1:
+  // (Later, parameterize these #####)
+  size += addWord(fCurrentIOState->fQTTimeUnitsPerSample);
+  size += addWord(0x00000001); // ???
+  size += addWord(0x00000001); // ???
+  size += addWord(0x00000002); // bytes per sample (uncompressed)
+
+  // Other special fields are in a 'wave' atom that follows:
+  size += addAtom_wave();
+addAtomEnd;
+
+addAtom(esds);
+  //#####
+  MediaSubsession& subsession = fCurrentIOState->fOurSubsession;
+  if (strcmp(subsession.mediumName(), "audio") == 0) {
+    // MPEG-4 audio
+    size += addWord(0x00000000); // ???
+    size += addWord(0x03808080); // ???
+    size += addWord(0x2a000000); // ???
+    size += addWord(0x04808080); // ???
+    size += addWord(0x1c401500); // ???
+    size += addWord(0x18000000); // ???
+    size += addWord(0x6d600000); // ???
+    size += addWord(0x6d600580); // ???
+    size += addByte(0x80); size += addByte(0x80); // ???
+  } else if (strcmp(subsession.mediumName(), "video") == 0) {
+    // MPEG-4 video
+    size += addWord(0x00000000); // ???
+    size += addWord(0x03370000); // ???
+    size += addWord(0x1f042f20); // ???
+    size += addWord(0x1104fd46); // ???
+    size += addWord(0x000d4e10); // ???
+    size += addWord(0x000d4e10); // ???
+    size += addByte(0x05); // ???
+  }
+
+  // Add the source's 'config' information:
+  unsigned configSize;
+  unsigned char* config
+    = parseGeneralConfigStr(subsession.fmtp_config(), configSize);
+  if (configSize > 0) --configSize; // remove trailing '\0';
+  size += addByte(configSize);
+  for (unsigned i = 0; i < configSize; ++i) {
+    size += addByte(config[i]);
+  }
+
+  if (strcmp(subsession.mediumName(), "audio") == 0) {
+    // MPEG-4 audio
+    size += addWord(0x06808080); // ???
+    size += addByte(0x01); // ???
+  } else {
+    // MPEG-4 video
+    size += addHalfWord(0x0601); // ???
+    size += addByte(0x02); // ???
+  }
+  //#####
+addAtomEnd;
+
+addAtom(srcq);
+  //#####
+  size += addWord(0x00000040); // ???
+  //#####
 addAtomEnd;
 
 addAtom(h263);
@@ -1603,10 +1741,36 @@ addAtom(h263);
   size += addWord(0x00000000); // Data size
   size += addWord(0x00010548); // Frame count+Compressor name (start)
     // "H.263"
-  size += addWord(0x2e323633); // Frame count+Compressor name (cont)
+  size += addWord(0x2e323633); // Compressor name (continued)
   size += addZeroWords(6); // Compressor name (continued - zero)
   size += addWord(0x00000018); // Compressor name (final)+Depth
   size += addHalfWord(0xffff); // Color table id
+addAtomEnd;
+
+addAtom(mp4v);
+// General sample description fields:
+  size += addWord(0x00000000); // Reserved
+  size += addWord(0x00000001); // Reserved+Data reference index
+// Video sample description fields:
+  size += addWord(0x00020001); // Version+Revision level
+  size += add4ByteString("appl"); // Vendor
+  size += addWord(0x00000200); // Temporal quality
+  size += addWord(0x00000400); // Spatial quality
+  unsigned const widthAndHeight = (fMovieWidth<<16)|fMovieHeight;
+  size += addWord(widthAndHeight); // Width+height
+  size += addWord(0x00480000); // Horizontal resolution
+  size += addWord(0x00480000); // Vertical resolution
+  size += addWord(0x00000000); // Data size
+  size += addWord(0x00010c4d); // Frame count+Compressor name (start)
+    // "MPEG-4 Video"
+  size += addWord(0x5045472d); // Compressor name (continued)
+  size += addWord(0x34205669); // Compressor name (continued)
+  size += addWord(0x64656f00); // Compressor name (continued)
+  size += addZeroWords(4); // Compressor name (continued - zero)
+  size += addWord(0x00000018); // Compressor name (final)+Depth
+  size += addHalfWord(0xffff); // Color table id
+  size += addAtom_esds(); // ESDescriptor
+  size += addWord(0x00000000); // ???
 addAtomEnd;
 
 unsigned QuickTimeFileSink::addAtom_rtp() {

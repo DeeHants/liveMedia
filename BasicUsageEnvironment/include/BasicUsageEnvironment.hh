@@ -27,7 +27,6 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 class BasicUsageEnvironment: public BasicUsageEnvironment0 {
 public:
   static BasicUsageEnvironment* createNew(TaskScheduler& taskScheduler);
-  virtual ~BasicUsageEnvironment();
   
   // redefined virtual functions:
   virtual int getErrno() const;
@@ -41,6 +40,7 @@ public:
 protected:
   BasicUsageEnvironment(TaskScheduler& taskScheduler);
       // called only by "createNew()" (or subclass constructors)
+  virtual ~BasicUsageEnvironment();
 };
 
 
@@ -62,7 +62,7 @@ private:
 				    void* clientData);
   virtual void turnOffBackgroundReadHandling(int socketNum);
   
-private:
+protected:
   // To implement background reads:
   int fMaxNumSockets;
   fd_set fReadSet;

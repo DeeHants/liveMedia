@@ -129,9 +129,10 @@ void MPEGVideoStreamFramer::doGetNextFrame() {
   continueReadProcessing();
 }
 
-void MPEGVideoStreamFramer::continueReadProcessing(void* clientData,
-						   unsigned char* /*ptr*/,
-						   unsigned /*size*/) {
+void MPEGVideoStreamFramer
+::continueReadProcessing(void* clientData,
+			 unsigned char* /*ptr*/, unsigned /*size*/,
+			 struct timeval /*presentationTime*/) {
   MPEGVideoStreamFramer* framer = (MPEGVideoStreamFramer*)clientData;
   framer->continueReadProcessing();
 }
@@ -142,6 +143,7 @@ void MPEGVideoStreamFramer::continueReadProcessing() {
     // We were able to acquire a frame from the input.
     // It has already been copied to the reader's space.
     fFrameSize = acquiredFrameSize;
+    fNumTruncatedBytes = fParser->numTruncatedBytes();
     
     // "fPresentationTime" should have already been computed.
     // Compute "fDurationInMicroseconds" now:

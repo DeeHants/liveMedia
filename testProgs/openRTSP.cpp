@@ -13,7 +13,7 @@ You should have received a copy of the GNU Lesser General Public License
 along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
-// Copyright (c) 1996-2003, Live Networks, Inc.  All rights reserved
+// Copyright (c) 1996-2004, Live Networks, Inc.  All rights reserved
 // A RTSP client test program that opens a RTSP URL argument,
 // and extracts the data from each incoming RTP stream.
 
@@ -44,6 +44,10 @@ char* getSDPDescriptionFromURL(Medium* client, char const* url,
 
   extern unsigned statusCode;
   statusCode = rtspClient->describeStatus();
+#ifdef SUPPORT_REAL_RTSP
+  extern Boolean isRealNetworksSession;
+  isRealNetworksSession = rtspClient->isRealNetworksSession();
+#endif
   return result;
 }
 

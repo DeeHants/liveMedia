@@ -13,7 +13,7 @@ You should have received a copy of the GNU Lesser General Public License
 along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
-// Copyright (c) 1996-2003, Live Networks, Inc.  All rights reserved
+// Copyright (c) 1996-2004, Live Networks, Inc.  All rights reserved
 // A test program that reads an AMR audio file (as defined in RFC 3267)
 // and streams it using RTP
 // main program
@@ -57,14 +57,14 @@ int main(int argc, char** argv) {
   audioSink = AMRAudioRTPSink::createNew(*env, &rtpGroupsock, 96);
 
   // Create (and start) a 'RTCP instance' for this RTP sink:
-  const unsigned totalSessionBandwidth = 10; // in kbps; for RTCP b/w share
+  const unsigned estimatedSessionBandwidth = 10; // in kbps; for RTCP b/w share
   const unsigned maxCNAMElen = 100;
   unsigned char CNAME[maxCNAMElen+1];
   gethostname((char*)CNAME, maxCNAMElen);
   CNAME[maxCNAMElen] = '\0'; // just in case
   RTCPInstance* rtcp
     = RTCPInstance::createNew(*env, &rtcpGroupsock,
-			      totalSessionBandwidth, CNAME,
+			      estimatedSessionBandwidth, CNAME,
 			      audioSink, NULL /* we're a server */,
 			      True /* we're a SSM source */);
   // Note: This starts RTCP running automatically

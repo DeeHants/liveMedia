@@ -347,7 +347,7 @@ static Boolean socketIsReadable(int socket) {
   timeout.tv_sec = timeout.tv_usec = 0;
 
   int result = select(numFds, &rd_set, NULL, NULL, &timeout);
-  return result > 0;
+  return result != 0; // not > 0, because windows can return -1 for file sockets
 }
 
 static char watchVariable;
@@ -386,7 +386,7 @@ unsigned MP3StreamState::readFromStream(unsigned char* buf,
 
     return totBytesRead;
   } else {
-    waitUntilSocketIsReadable(fEnv, fileno(fFid));
+    waitUntilSocketIsReadable(fEnv, (int)fileno(fFid));
     return fread(buf, 1, numChars, fFid);
   }
 }

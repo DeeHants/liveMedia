@@ -18,7 +18,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 // File sinks
 // Implementation
 
-#if defined(__WIN32__) || defined(_WIN32)
+#if (defined(__WIN32__) || defined(_WIN32)) && !defined(_WIN32_WCE)
 #include <io.h>
 #include <fcntl.h>
 #endif
@@ -139,7 +139,7 @@ void FileSink::addData(unsigned char* data, unsigned dataSize,
 
   if (!packetIsLost)
 #endif
-  if (fOutFid != NULL) {
+  if (fOutFid != NULL && data != NULL) {
     fwrite(data, dataSize, 1, fOutFid);
   }
 }
