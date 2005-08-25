@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2004 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2005 Live Networks, Inc.  All rights reserved.
 // A data structure that represents a session that consists of
 // potentially multiple (audio and/or video) sub-sessions
 // (This data structure is used for media *receivers* - i.e., clients.
@@ -47,6 +47,7 @@ public:
   char const* CNAME() const { return fCNAME; }
   struct in_addr const& sourceFilterAddr() const { return fSourceFilterAddr; }
   float& scale() { return fScale; }
+  char* mediaSessionType() const { return fMediaSessionType; }
 
   Boolean initiateByMediaType(char const* mimeType,
 			      MediaSubsession*& resultSubsession,
@@ -78,6 +79,7 @@ private:
   Boolean initializeWithSDP(char const* sdpDescription);
   Boolean parseSDPLine(char const* input, char const*& nextLine);
   Boolean parseSDPLine_c(char const* sdpLine);
+  Boolean parseSDPAttribute_type(char const* sdpLine);
   Boolean parseSDPAttribute_range(char const* sdpLine);
   Boolean parseSDPAttribute_source_filter(char const* sdpLine);
 
@@ -100,6 +102,7 @@ private:
   float fMaxPlayEndTime;
   struct in_addr fSourceFilterAddr; // used for SSM
   float fScale; // set from a RTSP "Scale:" header
+  char* fMediaSessionType; // holds a=type value
 };
 
 
@@ -187,6 +190,7 @@ public:
   Boolean fmtp_randomaccessindication() const { return fRandomaccessindication; }
   char const* fmtp_config() const { return fConfig; }
   char const* fmtp_mode() const { return fMode; }
+  char const* fmtp_spropparametersets() const { return fSpropParameterSets; }
 
   unsigned connectionEndpointAddress() const;
       // Converts "fConnectionEndpointName" to an address (or 0 if unknown)
@@ -265,7 +269,7 @@ private:
   unsigned fOctetalign, fProfile_level_id, fRobustsorting;
   unsigned fSizelength, fStreamstateindication, fStreamtype;
   Boolean fCpresent, fRandomaccessindication;
-  char *fConfig, *fMode;
+  char *fConfig, *fMode, *fSpropParameterSets;
 
   float fPlayEndTime;
   int fMCT_SLAP_SessionId; // 0 if not part of a MCT SLAP session

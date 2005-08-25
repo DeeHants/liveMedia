@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2004 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2005 Live Networks, Inc.  All rights reserved.
 // Abstract class for parsing a byte stream
 // Implementation
 
@@ -34,7 +34,8 @@ StreamParser::StreamParser(FramedSource* inputSource,
     fOnInputCloseClientData(onInputCloseClientData),
     fClientContinueFunc(clientContinueFunc),
     fClientContinueClientData(clientContinueClientData),
-    fSavedParserIndex(0), fCurParserIndex(0), fRemainingUnparsedBits(0),
+    fSavedParserIndex(0), fSavedRemainingUnparsedBits(0),
+    fCurParserIndex(0), fRemainingUnparsedBits(0),
     fTotNumValidBytes(0) {
   fBank[0] = new unsigned char[BANK_SIZE];
   fBank[1] = new unsigned char[BANK_SIZE];
@@ -172,4 +173,10 @@ unsigned StreamParser::getBits(unsigned numBits) {
 
     return result;
   }
+}
+
+void StreamParser::flushInput() {
+  fCurParserIndex = fSavedParserIndex = 0;
+  fSavedRemainingUnparsedBits = fRemainingUnparsedBits = 0;
+  fTotNumValidBytes = 0;
 }

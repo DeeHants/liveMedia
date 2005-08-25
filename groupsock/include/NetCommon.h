@@ -26,7 +26,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 
 #elif defined(__WIN32__) || defined(_WIN32) || defined(_WIN32_WCE)
 /* Windows */
-#if defined(_WINNT) || defined(__BORLANDC__) || defined(__MINGW32__) || defined(_WIN32_WCE)
+#if defined(WINNT) || defined(_WINNT) || defined(__BORLANDC__) || defined(__MINGW32__) || defined(_WIN32_WCE)
 #define _MSWSOCK_
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -34,7 +34,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include <windows.h>
 #include <string.h>
 
-#define _close closesocket
+#define closeSocket closesocket
 #define EWOULDBLOCK WSAEWOULDBLOCK
 
 #if defined(_WIN32_WCE)
@@ -42,6 +42,8 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #endif
 
 /* Definitions of size-specific types: */
+typedef __int64 int64_t;
+typedef unsigned __int64 u_int64_t;
 typedef unsigned u_int32_t;
 typedef unsigned short u_int16_t;
 typedef unsigned char u_int8_t;
@@ -79,9 +81,10 @@ typedef unsigned char u_int8_t;
 #include <unix.h>
 #endif
 
-#define _close close
+#define closeSocket close
 
 #ifdef SOLARIS
+#define u_int64_t uint64_t
 #define u_int32_t uint32_t
 #define u_int16_t uint16_t
 #define u_int8_t uint8_t

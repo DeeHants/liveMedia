@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2004 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2005 Live Networks, Inc.  All rights reserved.
 // A file source that is a plain byte stream (rather than frames)
 // Implementation
 
@@ -36,22 +36,68 @@ ByteStreamFileSource::createNew(UsageEnvironment& env, char const* fileName,
   FILE* fid = OpenInputFile(env, fileName);
   if (fid == NULL) return NULL;
 
+  Boolean deleteFidOnClose = fid == stdin ? False : True;
   ByteStreamFileSource* newSource
-    = new ByteStreamFileSource(env, fid, preferredFrameSize, playTimePerFrame);
+    = new ByteStreamFileSource(env, fid, deleteFidOnClose,
+			       preferredFrameSize, playTimePerFrame);
   newSource->fFileSize = GetFileSize(fileName, fid);
 
   return newSource;
 }
 
+ByteStreamFileSource*
+ByteStreamFileSource::createNew(UsageEnvironment& env, FILE* fid,
+				Boolean deleteFidOnClose,
+				unsigned preferredFrameSize,
+				unsigned playTimePerFrame) {
+  if (fid == NULL) return NULL;
+
+  ByteStreamFileSource* newSource
+    = new ByteStreamFileSource(env, fid, deleteFidOnClose,
+			       preferredFrameSize, playTimePerFrame);
+  newSource->fFileSize = GetFileSize(NULL, fid);
+
+  return newSource;
+}
+
+// The following is intended to support seeking in files > 2^32 bytes in size.
+#if (defined(__WIN32__) || defined(_WIN32)) && !defined(_WIN32_WCE)
+#include <io.h>
+#endif
+
+static int fseek64(FILE *fid, int64_t offset, int whence) {
+	clearerr(fid);
+	fflush(fid);
+#if (defined(__WIN32__) || defined(_WIN32)) && !defined(_WIN32_WCE)
+	return _lseeki64(_fileno(fid), offset, whence) == (int64_t)-1 ? -1 : 0;
+#else
+#if defined(_WIN32_WCE)
+	return fseek(fid, (long)(offset), whence);
+#else
+	return fseeko(fid, (off_t)(offset), whence);
+#endif
+#endif
+}
+
+void ByteStreamFileSource::seekToByteAbsolute(u_int64_t byteNumber) {
+  fseek64(fFid, (int64_t)byteNumber, SEEK_SET);
+}
+
+void ByteStreamFileSource::seekToByteRelative(int64_t offset) {
+  fseek64(fFid, offset, SEEK_CUR);
+}
+
 ByteStreamFileSource::ByteStreamFileSource(UsageEnvironment& env, FILE* fid,
+					   Boolean deleteFidOnClose,
 					   unsigned preferredFrameSize,
 					   unsigned playTimePerFrame)
   : FramedFileSource(env, fid), fPreferredFrameSize(preferredFrameSize),
-    fPlayTimePerFrame(playTimePerFrame), fLastPlayTime(0), fFileSize(0) {
+    fPlayTimePerFrame(playTimePerFrame), fLastPlayTime(0), fFileSize(0),
+    fDeleteFidOnClose(deleteFidOnClose) {
 }
 
 ByteStreamFileSource::~ByteStreamFileSource() {
-  CloseInputFile(fFid);
+  if (fDeleteFidOnClose && fFid != NULL) fclose(fFid);
 }
 
 void ByteStreamFileSource::doGetNextFrame() {

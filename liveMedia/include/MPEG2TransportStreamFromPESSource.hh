@@ -14,23 +14,21 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2004 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2005 Live Networks, Inc.  All rights reserved.
 // A filter for converting a stream of MPEG PES packets to a MPEG-2 Transport Stream
 // C++ header
 
 #ifndef _MPEG2_TRANSPORT_STREAM_FROM_PES_SOURCE_HH
 #define _MPEG2_TRANSPORT_STREAM_FROM_PES_SOURCE_HH
 
-#ifndef _FRAMED_FILTER_HH
-#include "FramedFilter.hh"
+#ifndef _MPEG2_TRANSPORT_STREAM_MULTIPLEXOR_HH
+#include "MPEG2TransportStreamMultiplexor.hh"
 #endif
 #ifndef _MPEG_1OR2_DEMUXED_ELEMENTARY_STREAM_HH
 #include "MPEG1or2DemuxedElementaryStream.hh"
 #endif
 
-#define PID_TABLE_SIZE 256
-
-class MPEG2TransportStreamFromPESSource: public FramedFilter {
+class MPEG2TransportStreamFromPESSource: public MPEG2TransportStreamMultiplexor {
 public:
   static MPEG2TransportStreamFromPESSource*
   createNew(UsageEnvironment& env, MPEG1or2DemuxedElementaryStream* inputSource);
@@ -43,7 +41,8 @@ protected:
 
 private:
   // Redefined virtual functions:
-  virtual void doGetNextFrame();
+  virtual void doStopGettingFrames();
+  virtual void awaitNewBuffer();
 
 private:
   static void afterGettingFrame(void* clientData, unsigned frameSize,
@@ -55,26 +54,9 @@ private:
 			  struct timeval presentationTime,
 			  unsigned durationInMicroseconds);
 
-  void deliverDataToClient(u_int8_t pid, unsigned char* buffer, unsigned bufferSize,
-			   unsigned& startPositionInBuffer);
-
-  void deliverPATPacket();
-  void deliverPMTPacket(Boolean hasChanged);
-
 private:
-  unsigned fOutgoingPacketCounter;
-  unsigned fProgramMapVersion;
-  struct {
-    unsigned counter;
-    u_int8_t streamType; // for use in Program Maps
-  } fPIDState[PID_TABLE_SIZE];
-  u_int8_t fPCR_PID, fCurrentPID;
-      // Note: We map 8-bit stream_ids directly to PIDs 
-  unsigned char fPCRHighBit;
-  u_int32_t fPCRRemainingBits;
-  u_int16_t fPCRExtension;
+  MPEG1or2DemuxedElementaryStream* fInputSource;
   unsigned char* fInputBuffer;
-  unsigned fInputBufferSize, fInputBufferBytesUsed;
 };
 
 #endif

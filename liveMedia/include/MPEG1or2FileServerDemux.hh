@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2004 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2005 Live Networks, Inc.  All rights reserved.
 // A server demultiplexer for a MPEG 1 or 2 Program Stream
 // C++ header
 
@@ -40,6 +40,9 @@ public:
 			  if one doesn't already appear in the stream */);
   ServerMediaSubsession* newAC3AudioServerMediaSubsession(); // AC-3 audio (from VOB)
 
+  unsigned fileSize() const { return fFileSize; }
+  float fileDuration() const { return fFileDuration; }
+
 private:
   MPEG1or2FileServerDemux(UsageEnvironment& env, char const* fileName,
 			  Boolean reuseFirstSource);
@@ -53,6 +56,8 @@ private:
 
 private:
   char const* fFileName;
+  unsigned fFileSize;
+  float fFileDuration;
   Boolean fReuseFirstSource;
   MPEG1or2Demux* fSession0Demux;
   MPEG1or2Demux* fLastCreatedDemux;

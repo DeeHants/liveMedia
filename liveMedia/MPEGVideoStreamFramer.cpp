@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2004 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2005 Live Networks, Inc.  All rights reserved.
 // A filter that breaks up an MPEG video elementary stream into
 //   headers and frames
 // Implementation
@@ -42,15 +42,29 @@ MPEGVideoStreamFramer::MPEGVideoStreamFramer(UsageEnvironment& env,
 					     FramedSource* inputSource)
   : FramedFilter(env, inputSource),
     fFrameRate(0.0) /* until we learn otherwise */,
-    fPictureCount(0), fPictureEndMarker(False),
-    fPicturesAdjustment(0), fPictureTimeBase(0.0), fTcSecsBase(0),
-    fHaveSeenFirstTimeCode(False) {
-  // Use the current wallclock time as the base 'presentation time':
-  gettimeofday(&fPresentationTimeBase, NULL);
+    fParser(NULL) {
+  reset();
 }
 
 MPEGVideoStreamFramer::~MPEGVideoStreamFramer() {
   delete fParser;
+}
+
+void MPEGVideoStreamFramer::flushInput() {
+  reset();
+  if (fParser != NULL) fParser->flushInput();
+}
+
+void MPEGVideoStreamFramer::reset() {
+  fPictureCount = 0;
+  fPictureEndMarker = False;
+  fPicturesAdjustment = 0;
+  fPictureTimeBase = 0.0;
+  fTcSecsBase = 0;
+  fHaveSeenFirstTimeCode = False;
+
+  // Use the current wallclock time as the base 'presentation time':
+  gettimeofday(&fPresentationTimeBase, NULL);
 }
 
 #ifdef DEBUG
@@ -62,14 +76,19 @@ void MPEGVideoStreamFramer
   // time_code, along with the "numAdditionalPictures" parameter:
   TimeCode& tc = fCurGOPTimeCode;
 
+  unsigned tcSecs
+    = (((tc.days*24)+tc.hours)*60+tc.minutes)*60+tc.seconds - fTcSecsBase;
   double pictureTime = fFrameRate == 0.0 ? 0.0
-    : (tc.pictures + fPicturesAdjustment + numAdditionalPictures)/fFrameRate
-    - fPictureTimeBase;
+    : (tc.pictures + fPicturesAdjustment + numAdditionalPictures)/fFrameRate;
+  while (pictureTime < fPictureTimeBase) { // "if" should be enough, but just in case
+    if (tcSecs > 0) tcSecs -= 1;
+    pictureTime += 1.0;
+  }
+  pictureTime -= fPictureTimeBase;
+  if (pictureTime < 0.0) pictureTime = 0.0; // sanity check
   unsigned pictureSeconds = (unsigned)pictureTime;
   double pictureFractionOfSecond = pictureTime - (double)pictureSeconds;
 
-  unsigned tcSecs
-    = (((tc.days*24)+tc.hours)*60+tc.minutes)*60+tc.seconds - fTcSecsBase;
   fPresentationTime = fPresentationTimeBase;
   fPresentationTime.tv_sec += tcSecs + pictureSeconds;
   fPresentationTime.tv_usec += (long)(pictureFractionOfSecond*1000000.0);
@@ -140,6 +159,7 @@ void MPEGVideoStreamFramer::continueReadProcessing() {
     fNumTruncatedBytes = fParser->numTruncatedBytes();
     
     // "fPresentationTime" should have already been computed.
+
     // Compute "fDurationInMicroseconds" now:
     fDurationInMicroseconds
       = (fFrameRate == 0.0 || ((int)fPictureCount) < 0) ? 0

@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2004 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2005 Live Networks, Inc.  All rights reserved.
 // RTP sink for a common kind of payload format: Those which pack multiple,
 // complete codec frames (as many as possible) into each RTP packet.
 // C++ header
@@ -28,8 +28,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 
 class MultiFramedRTPSink: public RTPSink {
 public:
-  static void setPacketSizes(unsigned preferredPacketSize,
-			     unsigned maxPacketSize);
+  void setPacketSizes(unsigned preferredPacketSize, unsigned maxPacketSize);
 
 protected:
   MultiFramedRTPSink(UsageEnvironment& env,
@@ -58,6 +57,9 @@ protected:
       // whether this frame can appear in position >1 in a pkt (default: True)
   virtual unsigned specialHeaderSize() const;
       // returns the size of any special header used (following the RTP header)
+  virtual unsigned frameSpecificHeaderSize() const;
+      // returns the size of any frame-specific header used (before each frame
+      // within the packet)
 
   // Functions that might be called by doSpecialFrameHandling():
   Boolean isFirstPacket() const { return fIsFirstPacket; }
@@ -69,6 +71,10 @@ protected:
 			    unsigned wordPosition = 0);
   void setSpecialHeaderBytes(unsigned char const* bytes, unsigned numBytes,
 			     unsigned bytePosition = 0);
+  void setFrameSpecificHeaderWord(unsigned word, /* 32 bits, in host order */
+				  unsigned wordPosition = 0);
+  void setFrameSpecificHeaderBytes(unsigned char const* bytes, unsigned numBytes,
+				   unsigned bytePosition = 0);
   unsigned numFramesUsedSoFar() const { return fNumFramesUsedSoFar; }
 
 private: // redefined virtual functions:
@@ -106,6 +112,9 @@ private:
   unsigned fTimestampPosition;
   unsigned fSpecialHeaderPosition;
   unsigned fSpecialHeaderSize; // size in bytes of any special header used
+  unsigned fCurFrameSpecificHeaderPosition;
+  unsigned fCurFrameSpecificHeaderSize; // size in bytes of cur frame-specific header
+  unsigned fTotalFrameSpecificHeaderSizes; // size of all frame-specific hdrs in pkt
 };
 
 #endif

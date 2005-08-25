@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2004 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2005 Live Networks, Inc.  All rights reserved.
 // A data structure that represents a session that consists of
 // potentially multiple (audio and/or video) sub-sessions
 // (This data structure is used for media *streamers* - i.e., servers.
@@ -114,7 +114,7 @@ public:
 
   unsigned trackNumber() const { return fTrackNumber; }
   char const* trackId();
-  virtual char const* sdpLines(ServerMediaSession& parentSession) = 0;
+  virtual char const* sdpLines() = 0;
   virtual void getStreamParameters(unsigned clientSessionId, // in
 				   netAddressBits clientAddress, // in
 				   Port const& clientRTPPort, // in
@@ -130,6 +130,8 @@ public:
 				   void*& streamToken // out
 				   ) = 0;
   virtual void startStream(unsigned clientSessionId, void* streamToken,
+			   TaskFunc* rtcpRRHandler,
+			   void* rtcpRRHandlerClientData,
 			   unsigned short& rtpSeqNum,
 			   unsigned& rtpTimestamp) = 0;
   virtual void pauseStream(unsigned clientSessionId, void* streamToken);
@@ -142,11 +144,20 @@ public:
     // returns 0 for an unbounded session (the default)
     // returns > 0 for a bounded session
 
+  // The following may be called by (e.g.) SIP servers, for which the
+  // address and port number fields in SDP descriptions need to be non-zero:
+  void setServerAddressAndPortForSDP(netAddressBits addressBits,
+				     portNumBits portBits);
+
 protected: // we're a virtual base class
   ServerMediaSubsession(UsageEnvironment& env);
 
-  char const* rangeSDPLine(ServerMediaSession& parentSession) const;
+  char const* rangeSDPLine() const;
       // returns a string to be delete[]d
+
+  ServerMediaSession* fParentSession;
+  netAddressBits fServerAddressForSDP;
+  portNumBits fPortNumForSDP;
 
 private:
   friend class ServerMediaSession;

@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2004 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2005 Live Networks, Inc.  All rights reserved.
 // MP4V-ES video RTP stream sources
 // Implementation
 
@@ -46,8 +46,11 @@ MPEG4ESVideoRTPSource::~MPEG4ESVideoRTPSource() {
 Boolean MPEG4ESVideoRTPSource
 ::processSpecialHeader(BufferedPacket* packet,
 		       unsigned& resultSpecialHeaderSize) {
-  fCurrentPacketBeginsFrame = fCurrentPacketCompletesFrame;
-          // whether the *previous* packet ended a frame
+  // The packet begins a frame iff its data begins with a system code
+  // (i.e., 0x000001??)
+  fCurrentPacketBeginsFrame
+    = packet->dataSize() >= 4 && (packet->data())[0] == 0
+    && (packet->data())[1] == 0 && (packet->data())[2] == 1;
 
   // The RTP "M" (marker) bit indicates the last fragment of a frame:
   fCurrentPacketCompletesFrame = packet->rtpMarkerBit();

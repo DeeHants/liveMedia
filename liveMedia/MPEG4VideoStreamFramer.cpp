@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2004 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2005 Live Networks, Inc.  All rights reserved.
 // A filter that breaks up an MPEG-4 video elementary stream into
 //   frames for:
 // - Visual Object Sequence (VS) Header + Visual Object (VO) Header
@@ -47,6 +47,7 @@ public:
   virtual ~MPEG4VideoStreamParser();
 
 private: // redefined virtual functions:
+  virtual void flushInput();
   virtual unsigned parse();
 
 private:
@@ -110,10 +111,11 @@ MPEG4VideoStreamFramer::MPEG4VideoStreamFramer(UsageEnvironment& env,
 }
 
 MPEG4VideoStreamFramer::~MPEG4VideoStreamFramer() {
+  delete[] fConfigBytes; delete[] fNewConfigBytes;
 }
 
 void MPEG4VideoStreamFramer::startNewConfig() {
-  delete fNewConfigBytes; fNewConfigBytes = NULL;
+  delete[] fNewConfigBytes; fNewConfigBytes = NULL;
   fNumNewConfigBytes = 0;
 }
 
@@ -127,7 +129,7 @@ void MPEG4VideoStreamFramer
   memmove(configNew, fNewConfigBytes, fNumNewConfigBytes);
   memmove(&configNew[fNumNewConfigBytes], newConfigBytes, numNewBytes);
   
-  delete fNewConfigBytes; fNewConfigBytes = configNew;
+  delete[] fNewConfigBytes; fNewConfigBytes = configNew;
   fNumNewConfigBytes += numNewBytes;
 }
 
@@ -162,6 +164,19 @@ void MPEG4VideoStreamParser::setParseState(MPEGParseState parseState) {
   fCurrentParseState = parseState;
   MPEGVideoStreamParser::setParseState();
 }
+
+void MPEG4VideoStreamParser::flushInput() {
+  fSecondsSinceLastTimeCode = 0;
+  fTotalTicksSinceLastTimeCode = 0;
+  fPrevNewTotalTicks = 0;
+  fPrevPictureCountDelta = 1;
+
+  StreamParser::flushInput();
+  if (fCurrentParseState != PARSING_VISUAL_OBJECT_SEQUENCE) {
+    setParseState(PARSING_VISUAL_OBJECT_SEQUENCE); // later, change to GOV or VOP? #####
+  }
+}
+
 
 unsigned MPEG4VideoStreamParser::parse() {
   try {
@@ -577,13 +592,13 @@ unsigned MPEG4VideoStreamParser::parseVideoObjectPlane() {
 	newTotalTicks += vop_time_increment_resolution;
       }
       fPrevNewTotalTicks = newTotalTicks;
-      int pictureCountDelta = newTotalTicks - fTotalTicksSinceLastTimeCode;
-      if (pictureCountDelta <= 0) pictureCountDelta = fPrevPictureCountDelta;
-          // ensures that the picture count always increases
-      usingSource()->fPictureCount += pictureCountDelta;
-      fPrevPictureCountDelta = pictureCountDelta;
-      fTotalTicksSinceLastTimeCode = newTotalTicks;
       if (vop_coding_type != 2/*B*/) {
+	int pictureCountDelta = newTotalTicks - fTotalTicksSinceLastTimeCode;
+	if (pictureCountDelta <= 0) pictureCountDelta = fPrevPictureCountDelta;
+	    // ensures that the picture count is always increasing
+	usingSource()->fPictureCount += pictureCountDelta;
+	fPrevPictureCountDelta = pictureCountDelta;
+	fTotalTicksSinceLastTimeCode = newTotalTicks;
 	fSecondsSinceLastTimeCode += modulo_time_base;
       }
     }

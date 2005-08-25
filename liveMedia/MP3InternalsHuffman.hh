@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2004 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2005 Live Networks, Inc.  All rights reserved.
 // MP3 internal implementation details (Huffman encoding)
 // C++ header
 
@@ -59,9 +59,6 @@ void MP3HuffmanDecode(MP3SideInfo::gr_info_s_t* gr, int isMPEG2,
 		      MP3HuffmanEncodingInfo& hei);
 
 extern unsigned char huffdec[]; // huffman table data
-
-unsigned getScaleFactorsLength(MP3SideInfo::gr_info_s_t* gr,
-			       Boolean isMPEG2);
 
 // The following are used if we process Huffman-decoded values
 #ifdef FOUR_BYTE_SAMPLES

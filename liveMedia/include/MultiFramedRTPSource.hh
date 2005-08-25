@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2004 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2005 Live Networks, Inc.  All rights reserved.
 // RTP source for a common kind of payload format: Those which pack multiple,
 // complete codec frames (as many as possible) into each RTP packet.
 // C++ header
@@ -50,6 +50,10 @@ protected:
 protected:
   Boolean fCurrentPacketBeginsFrame;
   Boolean fCurrentPacketCompletesFrame;
+
+protected:
+  // redefined virtual functions:
+  virtual void doStopGettingFrames();
 
 private:
   // redefined virtual functions:
@@ -112,6 +116,11 @@ protected:
   virtual void reset();
   virtual unsigned nextEnclosedFrameSize(unsigned char*& framePtr,
 					 unsigned dataSize);
+      // The above function has been deprecated.  Instead, new subclasses should use:
+  virtual void getNextEnclosedFrameParameters(unsigned char*& framePtr,
+					      unsigned dataSize,
+					      unsigned& frameSize,
+					      unsigned& frameDurationInMicroseconds);
 
   unsigned fPacketSize;
   unsigned char* fBuf;
@@ -136,6 +145,9 @@ private:
 
 class BufferedPacketFactory {
 public:
+  BufferedPacketFactory();
+  virtual ~BufferedPacketFactory();
+
   virtual BufferedPacket* createNewPacket(MultiFramedRTPSource* ourSource);
 };
 

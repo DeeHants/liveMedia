@@ -6,7 +6,7 @@
 #include "MPEG2TransportStreamFramer.hh"
 
 #define TRANSPORT_PACKET_SIZE 188
-#define NEW_DURATION_WEIGHT 0.05
+#define NEW_DURATION_WEIGHT 0.5
   // How much weight to give to the latest duration measurement (must be <= 1)
 
 ////////// PIDStatus //////////
@@ -49,6 +49,17 @@ void MPEG2TransportStreamFramer::doGetNextFrame() {
   fInputSource->getNextFrame(fTo, fMaxSize,
 			     afterGettingFrame, this,
 			     FramedSource::handleClosure, this);
+}
+
+void MPEG2TransportStreamFramer::doStopGettingFrames() {
+  FramedFilter::doStopGettingFrames();
+  fTSPacketCount = 0;
+
+  // Clear out the existing PID status table:
+  PIDStatus* pidStatus;
+  while ((pidStatus = (PIDStatus*)fPIDStatusTable->RemoveNext()) != NULL) {
+    delete pidStatus;
+  }
 }
 
 void MPEG2TransportStreamFramer

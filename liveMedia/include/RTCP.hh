@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2004 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2005 Live Networks, Inc.  All rights reserved.
 // RTCP
 // C++ header
 
@@ -46,7 +46,7 @@ public:
   static RTCPInstance* createNew(UsageEnvironment& env, Groupsock* RTCPgs,
 				 unsigned totSessionBW, /* in kbps */
 				 unsigned char const* cname,
-				 RTPSink const* sink,
+				 RTPSink* sink,
 				 RTPSource const* source,
 				 Boolean isSSMSource = False);
 
@@ -55,10 +55,24 @@ public:
 
   unsigned numMembers() const;
 
-  void setByeHandler(TaskFunc* handlerTask, void* clientData);
-      // assigns a handler routine to be called if a "BYE" arrives.
+  void setByeHandler(TaskFunc* handlerTask, void* clientData,
+		     Boolean handleActiveParticipantsOnly = True);
+      // Assigns a handler routine to be called if a "BYE" arrives.
       // The handler is called once only; for subsequent "BYE"s,
       // "setByeHandler()" would need to be called again.
+      // If "handleActiveParticipantsOnly" is True, then the handler is called
+      // only if the SSRC is for a known sender (if we have a "RTPSource"),
+      // or if the SSRC is for a known receiver (if we have a "RTPSink").
+      // This prevents (for example) the handler for a multicast receiver being
+      // called if some other multicast receiver happens to exit.
+      // If "handleActiveParticipantsOnly" is False, then the handler is called
+      // for any incoming RTCP "BYE". 
+  void setSRHandler(TaskFunc* handlerTask, void* clientData);
+  void setRRHandler(TaskFunc* handlerTask, void* clientData);
+      // Assigns a handler routine to be called if a "SR" or "RR"
+      // (respectively) arrives.  Unlike "setByeHandler()", the handler will
+      // be called once for each incoming "SR" or "RR".  (To turn off handling,
+      // call the function again with "handlerTask" (and "clientData") as NULL.
 
   Groupsock* RTCPgs() const { return fRTCPInterface.gs(); }
 
@@ -78,7 +92,7 @@ public:
 protected:
   RTCPInstance(UsageEnvironment& env, Groupsock* RTPgs, unsigned totSessionBW,
 	       unsigned char const* cname,
-	       RTPSink const* sink, RTPSource const* source,
+	       RTPSink* sink, RTPSource const* source,
 	       Boolean isSSMSource);
       // called only by createNew()
   virtual ~RTCPInstance();
@@ -112,7 +126,7 @@ private:
   OutPacketBuffer* fOutBuf;
   RTPInterface fRTCPInterface;
   unsigned fTotSessionBW;
-  RTPSink const* fSink;
+  RTPSink* fSink;
   RTPSource const* fSource;
   Boolean fIsSSMSource;
 
@@ -136,6 +150,11 @@ private:
 
   TaskFunc* fByeHandlerTask;
   void* fByeHandlerClientData;
+  Boolean fByeHandleActiveParticipantsOnly;
+  TaskFunc* fSRHandlerTask;
+  void* fSRHandlerClientData;
+  TaskFunc* fRRHandlerTask;
+  void* fRRHandlerClientData;
 
 public: // because this stuff is used by an external "C" function
   void schedule(double nextTime);

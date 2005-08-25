@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2004 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2005 Live Networks, Inc.  All rights reserved.
 // A class encapsulating the state of a MP3 stream
 // Implementation
 
@@ -36,7 +36,7 @@ MP3StreamState::~MP3StreamState() {
   if (fFid != NULL && fFid != stdin) {
     if (fFidIsReallyASocket) {
       long fid_long = (long)fFid;
-      _close((int)fid_long);
+      closeSocket((int)fid_long);
     } else {
       fclose(fFid);
     }

@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2004 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2005 Live Networks, Inc.  All rights reserved.
 // A 'ServerMediaSubsession' object that represents an existing
 // 'RTPSink', rather than one that creates new 'RTPSink's on demand.
 // Implementation
@@ -37,7 +37,7 @@ PassiveServerMediaSubsession
 }
 
 char const*
-PassiveServerMediaSubsession::sdpLines(ServerMediaSession& parentSession) {
+PassiveServerMediaSubsession::sdpLines() {
   if (fSDPLines == NULL ) {
     // Construct a set of SDP lines that describe this subsession:
     // Use the components from "rtpSink":
@@ -48,7 +48,7 @@ PassiveServerMediaSubsession::sdpLines(ServerMediaSession& parentSession) {
     unsigned char rtpPayloadType = fRTPSink.rtpPayloadType();
     char const* mediaType = fRTPSink.sdpMediaType();
     char* rtpmapLine = fRTPSink.rtpmapLine();
-    char const* rangeLine = rangeSDPLine(parentSession);
+    char const* rangeLine = rangeSDPLine();
     char const* auxSDPLine = fRTPSink.auxSDPLine();
     if (auxSDPLine == NULL) auxSDPLine = "";
     
@@ -79,7 +79,7 @@ PassiveServerMediaSubsession::sdpLines(ServerMediaSession& parentSession) {
 	    rangeLine, // a=range:... (if present)
 	    auxSDPLine, // optional extra SDP line
 	    trackId()); // a=control:<track-id>
-    delete[] ipAddressStr; delete[] rtpmapLine;
+    delete[] ipAddressStr; delete[] (char*)rangeLine; delete[] rtpmapLine;
     
     fSDPLines = strDup(sdpLines);
     delete[] sdpLines;
@@ -122,11 +122,17 @@ void PassiveServerMediaSubsession
 
 void PassiveServerMediaSubsession::startStream(unsigned /*clientSessionId*/,
 					       void* /*streamToken*/,
-                                                unsigned short& rtpSeqNum,
-                                                unsigned& rtpTimestamp) {
+					       TaskFunc* /*rtcpRRHandler*/,
+					       void* /*rtcpRRHandlerClientData*/,
+					       unsigned short& rtpSeqNum,
+					       unsigned& rtpTimestamp) {
+  // Note: We don't set a RTCP RR handler, because (i) we're called potentially
+  // many times on the same "RTCPInstance", and (ii) the "RTCPInstance" remains
+  // in existence after "stopStream()" is called.
   rtpSeqNum = fRTPSink.currentSeqNo();
   rtpTimestamp = fRTPSink.currentTimestamp();
 }
 
 PassiveServerMediaSubsession::~PassiveServerMediaSubsession() {
+  delete[] fSDPLines;
 }

@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2004 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2005 Live Networks, Inc.  All rights reserved.
 // RTP source for a common kind of payload format: Those that pack multiple,
 // complete codec frames (as many as possible) into each RTP packet.
 // Implementation
@@ -87,6 +87,10 @@ Boolean MultiFramedRTPSource
 				    unsigned /*packetSize*/) {
   // Default implementation:
   return True;
+}
+
+void MultiFramedRTPSource::doStopGettingFrames() {
+  fRTPInterface.stopNetworkReading();
 }
 
 void MultiFramedRTPSource::doGetNextFrame() {
@@ -294,12 +298,28 @@ void BufferedPacket::reset() {
   fUseCount = 0;
 }
 
+// The following function has been deprecated:
 unsigned BufferedPacket
 ::nextEnclosedFrameSize(unsigned char*& /*framePtr*/, unsigned dataSize) {
   // By default, use the entire buffered data, even though it may consist
   // of more than one frame, on the assumption that the client doesn't
   // care.  (This is more efficient than delivering a frame at a time)
   return dataSize;
+}
+
+void BufferedPacket
+::getNextEnclosedFrameParameters(unsigned char*& framePtr, unsigned dataSize,
+				 unsigned& frameSize,
+				 unsigned& frameDurationInMicroseconds) {
+  // By default, use the entire buffered data, even though it may consist
+  // of more than one frame, on the assumption that the client doesn't
+  // care.  (This is more efficient than delivering a frame at a time)
+
+  // For backwards-compatibilty with existing uses of (the now deprecated)
+  // "nextEnclosedFrameSize()", call that function to implement this one:
+  frameSize = nextEnclosedFrameSize(framePtr, dataSize);
+
+  frameDurationInMicroseconds = 0; // by default.  Subclasses should correct this.  
 }
 
 Boolean BufferedPacket::fillInData(RTPInterface& rtpInterface) {
@@ -351,8 +371,10 @@ void BufferedPacket::use(unsigned char* to, unsigned toSize,
 			 Boolean& hasBeenSyncedUsingRTCP,
 			 Boolean& rtpMarkerBit) {
   unsigned char* origFramePtr = &fBuf[fHead];
-  unsigned char* newFramePtr = origFramePtr; //may change in the call below
-  unsigned frameSize = nextEnclosedFrameSize(newFramePtr, fTail - fHead);
+  unsigned char* newFramePtr = origFramePtr; // may change in the call below
+  unsigned frameSize, frameDurationInMicroseconds;
+  getNextEnclosedFrameParameters(newFramePtr, fTail - fHead,
+				 frameSize, frameDurationInMicroseconds);
   if (frameSize > toSize) {
     bytesTruncated = frameSize - toSize;
     bytesUsed = toSize;
@@ -370,6 +392,19 @@ void BufferedPacket::use(unsigned char* to, unsigned toSize,
   presentationTime = fPresentationTime;
   hasBeenSyncedUsingRTCP = fHasBeenSyncedUsingRTCP;
   rtpMarkerBit = fRTPMarkerBit;
+
+  // Update "fPresentationTime" for the next enclosed frame (if any):
+  fPresentationTime.tv_usec += frameDurationInMicroseconds;
+  if (fPresentationTime.tv_usec >= 1000000) {
+    fPresentationTime.tv_sec += fPresentationTime.tv_usec/1000000;
+    fPresentationTime.tv_usec = fPresentationTime.tv_usec%1000000;
+  }
+}
+
+BufferedPacketFactory::BufferedPacketFactory() {
+}
+
+BufferedPacketFactory::~BufferedPacketFactory() {
 }
 
 BufferedPacket* BufferedPacketFactory

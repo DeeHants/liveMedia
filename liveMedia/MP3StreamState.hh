@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2004 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2005 Live Networks, Inc.  All rights reserved.
 // A class encapsulating the state of a MP3 stream
 // C++ header
 
@@ -62,6 +62,9 @@ public:
 
   void checkForXingHeader(); // hack for Xing VBR files
 
+protected: // private->protected requested by Pierre l'Hussiez
+  unsigned readFromStream(unsigned char* buf, unsigned numChars);
+
 private:
   MP3FrameParams& fr() {return fCurrentFrame;}
   MP3FrameParams const& fr() const {return fCurrentFrame;}
@@ -69,7 +72,6 @@ private:
   struct timeval currentFramePlayTime() const;
 
   Boolean findNextFrame();
-  unsigned readFromStream(unsigned char* buf, unsigned numChars);
 
 private:
   UsageEnvironment& fEnv;

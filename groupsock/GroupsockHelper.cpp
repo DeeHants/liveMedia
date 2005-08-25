@@ -14,18 +14,13 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
 // "mTunnel" multicast access service
-// Copyright (c) 1996-2004 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2005 Live Networks, Inc.  All rights reserved.
 // Helper routines to implement 'group sockets'
 // Implementation
 
 #include "GroupsockHelper.hh"
 
 #if defined(__WIN32__) || defined(_WIN32)
-#ifdef _WIN32_WCE
-#include <afxwin.h>
-#include <wcealt.h>
-#define ctime wce_ctime
-#endif
 #include <time.h>
 extern "C" int initializeWinsockIfNecessary();
 #else
@@ -66,7 +61,7 @@ int setupDatagramSocket(UsageEnvironment& env, Port port,
   if (setsockopt(newSocket, SOL_SOCKET, SO_REUSEADDR,
 		 (const char*)&reuseFlag, sizeof reuseFlag) < 0) {
     socketErr(env, "setsockopt(SO_REUSEADDR) error: ");
-    _close(newSocket);
+    closeSocket(newSocket);
     return -1;
   }
   
@@ -77,7 +72,7 @@ int setupDatagramSocket(UsageEnvironment& env, Port port,
   if (setsockopt(newSocket, SOL_SOCKET, SO_REUSEPORT,
 		 (const char*)&reuseFlag, sizeof reuseFlag) < 0) {
     socketErr(env, "setsockopt(SO_REUSEPORT) error: ");
-    _close(newSocket);
+    closeSocket(newSocket);
     return -1;
   }
 #endif
@@ -87,7 +82,7 @@ int setupDatagramSocket(UsageEnvironment& env, Port port,
   if (setsockopt(newSocket, IPPROTO_IP, IP_MULTICAST_LOOP,
 		 (const char*)&loop, sizeof loop) < 0) {
     socketErr(env, "setsockopt(IP_MULTICAST_LOOP) error: ");
-    _close(newSocket);
+    closeSocket(newSocket);
     return -1;
   }
 #endif
@@ -96,7 +91,7 @@ int setupDatagramSocket(UsageEnvironment& env, Port port,
   // Note: Windoze requires binding, even if the port number is 0
 #if defined(__WIN32__) || defined(_WIN32)
 #else
-  if (port.num() != 0) {
+  if (port.num() != 0 || ReceivingInterfaceAddr != INADDR_ANY) {
 #endif
     struct sockaddr_in name;
     name.sin_family = AF_INET;
@@ -107,7 +102,7 @@ int setupDatagramSocket(UsageEnvironment& env, Port port,
       sprintf(tmpBuffer, "bind() error (port number: %d): ",
 	      ntohs(port.num()));
       socketErr(env, tmpBuffer);
-      _close(newSocket);
+      closeSocket(newSocket);
       return -1;
     }
 #if defined(__WIN32__) || defined(_WIN32)
@@ -123,7 +118,7 @@ int setupDatagramSocket(UsageEnvironment& env, Port port,
     if (setsockopt(newSocket, IPPROTO_IP, IP_MULTICAST_IF,
 		   (const char*)&addr, sizeof addr) < 0) {
       socketErr(env, "error setting outgoing multicast interface: ");
-      _close(newSocket);
+      closeSocket(newSocket);
       return -1;
     }
   }
@@ -148,7 +143,7 @@ int setupStreamSocket(UsageEnvironment& env,
   if (setsockopt(newSocket, SOL_SOCKET, SO_REUSEADDR,
 		 (const char*)&reuseFlag, sizeof reuseFlag) < 0) {
     socketErr(env, "setsockopt(SO_REUSEADDR) error: ");
-    _close(newSocket);
+    closeSocket(newSocket);
     return -1;
   }
   
@@ -163,7 +158,7 @@ int setupStreamSocket(UsageEnvironment& env,
   if (setsockopt(newSocket, SOL_SOCKET, SO_REUSEPORT,
 		 (const char*)&reuseFlag, sizeof reuseFlag) < 0) {
     socketErr(env, "setsockopt(SO_REUSEPORT) error: ");
-    _close(newSocket);
+    closeSocket(newSocket);
     return -1;
   }
 #endif
@@ -173,7 +168,7 @@ int setupStreamSocket(UsageEnvironment& env,
   // Note: Windoze requires binding, even if the port number is 0
 #if defined(__WIN32__) || defined(_WIN32)
 #else
-  if (port.num() != 0) {
+  if (port.num() != 0 || ReceivingInterfaceAddr != INADDR_ANY) {
 #endif
     struct sockaddr_in name;
     name.sin_family = AF_INET;
@@ -184,7 +179,7 @@ int setupStreamSocket(UsageEnvironment& env,
       sprintf(tmpBuffer, "bind() error (port number: %d): ",
 	      ntohs(port.num()));
       socketErr(env, tmpBuffer);
-      _close(newSocket);
+      closeSocket(newSocket);
       return -1;
     }
 #if defined(__WIN32__) || defined(_WIN32)
@@ -207,7 +202,7 @@ int setupStreamSocket(UsageEnvironment& env,
     if (fcntl(newSocket, F_SETFL, curFlags|O_NONBLOCK) < 0) {
 #endif
       socketErr(env, "failed to make non-blocking: ");
-      _close(newSocket);
+      closeSocket(newSocket);
       return -1;
     }
   }
@@ -431,8 +426,16 @@ Boolean socketJoinGroup(UsageEnvironment& env, int socket,
   imr.imr_interface.s_addr = ReceivingInterfaceAddr;
   if (setsockopt(socket, IPPROTO_IP, IP_ADD_MEMBERSHIP,
 		 (const char*)&imr, sizeof (struct ip_mreq)) < 0) {
-    socketErr(env, "setsockopt(IP_ADD_MEMBERSHIP) error: ");
-    return False;
+#if defined(__WIN32__) || defined(_WIN32)
+    if (env.getErrno() != 0) {
+      // That piece-of-shit toy operating system (Windows) sometimes lies
+      // about setsockopt() failing!
+#endif
+      socketErr(env, "setsockopt(IP_ADD_MEMBERSHIP) error: ");
+      return False;
+#if defined(__WIN32__) || defined(_WIN32)
+    }
+#endif
   }
   
   return True;
@@ -547,121 +550,123 @@ static Boolean badAddress(netAddressBits addr) {
 Boolean loopbackWorks = 1;
 
 netAddressBits ourSourceAddressForMulticast(UsageEnvironment& env) {
-  	static netAddressBits ourAddress = 0;
-	int sock = -1;
-	struct in_addr testAddr;
+  static netAddressBits ourAddress = 0;
+  int sock = -1;
+  struct in_addr testAddr;
+  
+  if (ourAddress == 0) {
+    // We need to find our source address
+    struct sockaddr_in fromAddr;
+    
+    // Get our address by sending a (0-TTL) multicast packet,
+    // receiving it, and looking at the source address used.
+    // (This is kinda bogus, but it provides the best guarantee
+    // that other nodes will think our address is the same as we do.)
+    do {
+      loopbackWorks = 0; // until we learn otherwise
 
-	if (ourAddress == 0) do {
-		// We need to find our source address
+      testAddr.s_addr = our_inet_addr("228.67.43.91"); // arbitrary
+      Port testPort(15947); // ditto
+      
+      sock = setupDatagramSocket(env, testPort);
+      if (sock < 0) break;
+      
+      if (!socketJoinGroup(env, sock, testAddr.s_addr)) break;
+      
+      unsigned char testString[] = "hostIdTest";
+      unsigned testStringLength = sizeof testString;
+      
+      if (!writeSocket(env, sock, testAddr, testPort, 0,
+		       testString, testStringLength)) break;
+      
+      unsigned char readBuffer[20];
+      struct timeval timeout;
+      timeout.tv_sec = 5;
+      timeout.tv_usec = 0;
+      int bytesRead = readSocket(env, sock,
+				 readBuffer, sizeof readBuffer,
+				 fromAddr, &timeout);
+      if (bytesRead == 0 // timeout occurred
+	  || bytesRead != (int)testStringLength
+	  || strncmp((char*)readBuffer, (char*)testString,
+		     testStringLength) != 0) {
+	break;
+      }
 
-		// Get our address by sending a (0-TTL) multicast packet,
-		// receiving it, and looking at the source address used.
-		// (This is kinda bogus, but it provides the best guarantee
-		// that other nodes will think our id is the same as we do.)
-		// (This is a gross hack; there must be a better way!!!)
-	
-		testAddr.s_addr = our_inet_addr("228.67.43.91"); // arbitrary
-		Port testPort(15947); // ditto
+      loopbackWorks = 1;
+    } while (0);
 
-		sock = setupDatagramSocket(env, testPort);
-		if (sock < 0) break;
-
-		if (!socketJoinGroup(env, sock, testAddr.s_addr)) break;
-
-		unsigned char testString[] = "hostIdTest";
-		unsigned testStringLength = sizeof testString;
-
-		if (!writeSocket(env, sock, testAddr, testPort, 0,
-				 testString, testStringLength)) break;
-
-		unsigned char readBuffer[20];
-		struct sockaddr_in fromAddr;
-		struct timeval timeout;
-		timeout.tv_sec = 5;
-		timeout.tv_usec = 0;
-		int bytesRead = readSocket(env, sock,
-					   readBuffer, sizeof readBuffer,
-					   fromAddr, &timeout);
-		if (bytesRead == 0 // timeout occurred
-		    || bytesRead != (int)testStringLength
-		    || strncmp((char*)readBuffer, (char*)testString,
-			       testStringLength) != 0) {
-		  loopbackWorks = 0;
-
-		  // We couldn't find our address using multicast loopback
-		  // so try instead to look it up directly.
-		  char hostname[100];
-		  hostname[0] = '\0';
+    if (!loopbackWorks) do {
+      // We couldn't find our address using multicast loopback
+      // so try instead to look it up directly.
+      char hostname[100];
+      hostname[0] = '\0';
 #ifndef CRIS
-		  gethostname(hostname, sizeof hostname);
+      gethostname(hostname, sizeof hostname);
 #endif
-		  if (hostname[0] == '\0') {
-		    env.setResultErrMsg("initial gethostname() failed");
-		    break;
-		  }
-
+      if (hostname[0] == '\0') {
+	env.setResultErrMsg("initial gethostname() failed");
+	break;
+      }
+      
 #if defined(VXWORKS)
 #include <hostLib.h>
-		  if (ERROR == (ourAddress = hostGetByName( hostname ))) {
-		    ourAddress = 0;
-		  }
-
+      if (ERROR == (ourAddress = hostGetByName( hostname ))) break;
 #else
-		  struct hostent* hstent
-		    = (struct hostent*)gethostbyname(hostname);
-		  if (hstent == NULL || hstent->h_length != 4) {
-			env.setResultErrMsg("initial gethostbyname() failed");
-			break;
-		  }
-		  // Take the first address that's not bad
-		  // (This code, like many others, won't handle IPv6)
-		  netAddressBits addr = 0;
-		  for (unsigned i = 0; ; ++i) {
-		    char* addrPtr = hstent->h_addr_list[i];
-		    if (addrPtr == NULL) break;
-
-		    netAddressBits a = *(netAddressBits*)addrPtr;
-		    if (!badAddress(a)) {
-		      addr = a;
-		      break;
-		    }
-		  }
-		  if (addr != 0) {
-		    fromAddr.sin_addr.s_addr = addr;
-		  } else {
-			env.setResultMsg("no address");
-			break;
-		  }
-		}
-#endif
-
-		// Make sure we have a good address:
-		netAddressBits from = fromAddr.sin_addr.s_addr;
-                if (badAddress(from)) {
-			char tmp[100];
-			sprintf(tmp,
-				"This computer has an invalid IP address: 0x%x",
-				(netAddressBits)(ntohl(from)));
-			env.setResultMsg(tmp);
-			break;
-		}
-
-		ourAddress = from;
-	} while (0);
-
-	if (sock >= 0) {
-		socketLeaveGroup(env, sock, testAddr.s_addr);
-		_close(sock);
+      struct hostent* hstent
+	= (struct hostent*)gethostbyname(hostname);
+      if (hstent == NULL || hstent->h_length != 4) {
+	env.setResultErrMsg("initial gethostbyname() failed");
+	break;
+      }
+      // Take the first address that's not bad
+      // (This code, like many others, won't handle IPv6)
+      netAddressBits addr = 0;
+      for (unsigned i = 0; ; ++i) {
+	char* addrPtr = hstent->h_addr_list[i];
+	if (addrPtr == NULL) break;
+	
+	netAddressBits a = *(netAddressBits*)addrPtr;
+	if (!badAddress(a)) {
+	  addr = a;
+	  break;
 	}
-
-	// Use our newly-discovered IP address, and the current time,
-	// to initialize the random number generator's seed:
-	struct timeval timeNow;
-	gettimeofday(&timeNow, NULL);
-	unsigned seed = ourAddress^timeNow.tv_sec^timeNow.tv_usec;
-	our_srandom(seed);
-
-	return ourAddress;
+      }
+      if (addr != 0) {
+	fromAddr.sin_addr.s_addr = addr;
+      } else {
+	env.setResultMsg("no address");
+	break;
+      }
+    } while (0);
+    
+    // Make sure we have a good address:
+    netAddressBits from = fromAddr.sin_addr.s_addr;
+    if (badAddress(from)) {
+      char tmp[100];
+      sprintf(tmp,
+	      "This computer has an invalid IP address: 0x%x",
+	      (netAddressBits)(ntohl(from)));
+      env.setResultMsg(tmp);
+      from = 0;
+    }
+    
+    ourAddress = from;
+#endif
+    
+    if (sock >= 0) {
+      socketLeaveGroup(env, sock, testAddr.s_addr);
+      closeSocket(sock);
+    }
+    
+    // Use our newly-discovered IP address, and the current time,
+    // to initialize the random number generator's seed:
+    struct timeval timeNow;
+    gettimeofday(&timeNow, NULL);
+    unsigned seed = ourAddress^timeNow.tv_sec^timeNow.tv_usec;
+    our_srandom(seed);
+  }
+  return ourAddress;
 }
 
 netAddressBits chooseRandomIPv4SSMAddress(UsageEnvironment& env) {
@@ -677,19 +682,27 @@ netAddressBits chooseRandomIPv4SSMAddress(UsageEnvironment& env) {
 }
 
 char const* timestampString() {
-	struct timeval tvNow;
-	gettimeofday(&tvNow, NULL);
-
-	static char timeString[9]; // holds hh:mm:ss plus trailing '\0'
-	char const* ctimeResult = ctime((time_t*)&tvNow.tv_sec);
-	char const* from = &ctimeResult[11];
-	int i;
-	for (i = 0; i < 8; ++i) {
-		timeString[i] = from[i];
-	}
-	timeString[i] = '\0';
-
-	return (char const*)&timeString;
+  struct timeval tvNow;
+  gettimeofday(&tvNow, NULL);
+  
+#if !defined(_WIN32_WCE)
+  static char timeString[9]; // holds hh:mm:ss plus trailing '\0'
+  char const* ctimeResult = ctime((time_t*)&tvNow.tv_sec);
+  char const* from = &ctimeResult[11];
+  int i;
+  for (i = 0; i < 8; ++i) {
+    timeString[i] = from[i];
+  }
+  timeString[i] = '\0';
+#else
+  // WinCE apparently doesn't have "ctime()", so instead, construct
+  // a timestamp string just using the integer and fractional parts
+  // of "tvNow":
+  static char timeString[50];
+  sprintf(timeString, "%lu.%06ld", tvNow.tv_sec, tvNow.tv_usec);
+#endif
+  
+  return (char const*)&timeString;
 }
 
 #if (defined(__WIN32__) || defined(_WIN32)) && !defined(IMN_PIM)

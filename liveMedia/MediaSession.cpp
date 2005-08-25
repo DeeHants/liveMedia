@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2004 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2005 Live Networks, Inc.  All rights reserved.
 // A data structure that represents a session that consists of
 // potentially multiple (audio and/or video) sub-sessions
 // Implementation
@@ -61,7 +61,8 @@ Boolean MediaSession::lookupByName(UsageEnvironment& env,
 MediaSession::MediaSession(UsageEnvironment& env)
   : Medium(env),
     fSubsessionsHead(NULL), fSubsessionsTail(NULL),
-    fConnectionEndpointName(NULL), fMaxPlayEndTime(0.0f), fScale(1.0f) {
+    fConnectionEndpointName(NULL), fMaxPlayEndTime(0.0f),
+    fScale(1.0f), fMediaSessionType(NULL) {
 #ifdef SUPPORT_REAL_RTSP
   RealInitSDPAttributes(this);
 #endif
@@ -84,6 +85,7 @@ MediaSession::~MediaSession() {
   delete fSubsessionsHead;
   delete[] fCNAME;
   delete[] fConnectionEndpointName;
+  delete[] fMediaSessionType;
 #ifdef SUPPORT_REAL_RTSP
   RealReclaimSDPAttributes(this);
 #endif
@@ -111,6 +113,7 @@ Boolean MediaSession::initializeWithSDP(char const* sdpDescription) {
     // Check for various special SDP lines that we understand:
     if (parseSDPLine_c(sdpLine)) continue;
     if (parseSDPAttribute_range(sdpLine)) continue;
+    if (parseSDPAttribute_type(sdpLine)) continue;
     if (parseSDPAttribute_source_filter(sdpLine)) continue;
 #ifdef SUPPORT_REAL_RTSP
     if (RealParseSDPAttributes(this, sdpLine)) continue;
@@ -297,6 +300,25 @@ Boolean MediaSession::parseSDPLine_c(char const* sdpLine) {
   }
 
   return False;
+}
+
+Boolean MediaSession::parseSDPAttribute_type(char const* sdpLine) {
+  // Check for a "a=type:broadcast|meeting|moderated|test|H.332|recvonly" line:
+  Boolean parseSuccess = False;
+
+  char *resultStr = NULL;
+  char* buffer = strDupSize(sdpLine);
+  if (sscanf(sdpLine, "a=type: %[^ ]", buffer) == 1) {
+    resultStr = strDup(buffer);
+    if (resultStr != NULL) {
+      delete[] fMediaSessionType;
+      fMediaSessionType = resultStr;
+    }
+    parseSuccess = True;
+  }
+  delete[] buffer;
+
+  return parseSuccess;
 }
 
 static Boolean parseRangeAttribute(char const* sdpLine, float& endTime) {
@@ -528,7 +550,7 @@ MediaSubsession::MediaSubsession(MediaSession& parent)
     fObjecttype(0), fOctetalign(0), fProfile_level_id(0), fRobustsorting(0),
     fSizelength(0), fStreamstateindication(0), fStreamtype(0),
     fCpresent(False), fRandomaccessindication(False),
-    fConfig(NULL), fMode(NULL),
+    fConfig(NULL), fMode(NULL), fSpropParameterSets(NULL),
     fPlayEndTime(0.0),
     fMCT_SLAP_SessionId(0), fMCT_SLAP_Stagger(0),
     fVideoWidth(0), fVideoHeight(0), fVideoFPS(0), fNumChannels(1), fScale(1.0f),
@@ -544,7 +566,7 @@ MediaSubsession::~MediaSubsession() {
 
   delete[] fConnectionEndpointName; delete[] fSavedSDPLines;
   delete[] fMediumName; delete[] fCodecName; delete[] fProtocolName;
-  delete[] fControlPath; delete[] fConfig; delete[] fMode;
+  delete[] fControlPath; delete[] fConfig; delete[] fMode; delete[] fSpropParameterSets;
 
   delete fNext;
 #ifdef SUPPORT_REAL_RTSP
@@ -739,6 +761,11 @@ Boolean MediaSubsession::initiate(int useSpecialRTPoffset) {
 	  = H263plusVideoRTPSource::createNew(env(), fRTPSocket,
 					      fRTPPayloadFormat,
 					      fRTPTimestampFrequency);
+      } else if (strcmp(fCodecName, "H264") == 0) {
+	fReadSource = fRTPSource
+	  = H264VideoRTPSource::createNew(env(), fRTPSocket,
+					  fRTPPayloadFormat,
+					  fRTPTimestampFrequency);
       } else if (strcmp(fCodecName, "JPEG") == 0) { // motion JPEG
 	fReadSource = fRTPSource
 	  = JPEGVideoRTPSource::createNew(env(), fRTPSocket,
@@ -1042,6 +1069,9 @@ Boolean MediaSubsession::parseSDPAttribute_fmtp(char const* sdpLine) {
 	delete[] fConfig; fConfig = strDup(valueStr);
       } else if (sscanf(line, " mode = %[^; \t\r\n]", valueStr) == 1) {
 	delete[] fMode; fMode = strDup(valueStr);
+      } else if (sscanf(sdpLine, " sprop-parameter-sets = %[^; \t\r\n]", valueStr) == 1) {
+	// Note: We used "sdpLine" here, because the value is case-sensitive.
+	delete[] fSpropParameterSets; fSpropParameterSets = strDup(valueStr); 
       } else {
 	// Some of the above parameters are Boolean.  Check whether the parameter
 	// names appear alone, without a "= 1" at the end:
@@ -1065,6 +1095,11 @@ Boolean MediaSubsession::parseSDPAttribute_fmtp(char const* sdpLine) {
       while (*line != '\0' && *line != '\r' && *line != '\n'
 	     && *line != ';') ++line;
       while (*line == ';') ++line;
+
+      // Do the same with sdpLine; needed for finding case sensitive values:
+      while (*sdpLine != '\0' && *sdpLine != '\r' && *sdpLine != '\n'
+	     && *sdpLine != ';') ++sdpLine;
+      while (*sdpLine == ';') ++sdpLine;
     }
     delete[] lineCopy;
     return True;

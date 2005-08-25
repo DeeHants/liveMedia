@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2004 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2005 Live Networks, Inc.  All rights reserved.
 // A data structure that represents a session that consists of
 // potentially multiple (audio and/or video) sub-sessions
 // (This data structure is used for media *streamers* - i.e., servers.
@@ -82,7 +82,7 @@ ServerMediaSession::~ServerMediaSession() {
 
 Boolean
 ServerMediaSession::addSubsession(ServerMediaSubsession* subsession) {
-  if (subsession->fTrackNumber != 0) return False; // it's already used
+  if (subsession->fParentSession != NULL) return False; // it's already used
 
   if (fSubsessionsTail == NULL) {
     fSubsessionsHead = subsession;
@@ -91,6 +91,7 @@ ServerMediaSession::addSubsession(ServerMediaSubsession* subsession) {
   }
   fSubsessionsTail = subsession;
 
+  subsession->fParentSession = this;
   subsession->fTrackNumber = ++fSubsessionCounter;
   return True;
 }
@@ -111,7 +112,7 @@ void ServerMediaSession::testScaleFactor(float& scale) {
     subsession->testScaleFactor(ssscale);
     if (subsession == fSubsessionsHead) { // this is the first subsession
       minSSScale = maxSSScale = bestSSScale = ssscale;
-      bestDistanceTo1 = fabsf(ssscale - 1.0f);
+      bestDistanceTo1 = (float)fabs(ssscale - 1.0f);
     } else {
       if (ssscale < minSSScale) {
 	minSSScale = ssscale;
@@ -119,7 +120,7 @@ void ServerMediaSession::testScaleFactor(float& scale) {
 	maxSSScale = ssscale;
       }
 
-      float distanceTo1 = fabsf(ssscale - 1.0f);
+      float distanceTo1 = (float)fabs(ssscale - 1.0f);
       if (distanceTo1 < bestDistanceTo1) {
 	bestSSScale = ssscale;
 	bestDistanceTo1 = distanceTo1;
@@ -204,6 +205,7 @@ char* ServerMediaSession::generateSDPDescription() {
     sourceFilterLine = strDup("");
   }
 
+  char* rangeLine = NULL; // for now
   char* sdp = NULL; // for now
 
   do {
@@ -214,7 +216,7 @@ char* ServerMediaSession::generateSDPDescription() {
     ServerMediaSubsession* subsession;
     for (subsession = fSubsessionsHead; subsession != NULL;
 	 subsession = subsession->fNext) {
-      char const* sdpLines = subsession->sdpLines(*this);
+      char const* sdpLines = subsession->sdpLines();
       if (sdpLines == NULL) break; // the media's not available
       sdpLength += strlen(sdpLines);
     }
@@ -222,7 +224,6 @@ char* ServerMediaSession::generateSDPDescription() {
 
     // Unless subsessions have differing durations, we also have a "a=range:" line:
     float dur = duration();
-    char* rangeLine;
     if (dur == 0.0) {
       rangeLine = strDup("a=range:npt=0-\r\n");
     } else if (dur > 0.0) {
@@ -279,11 +280,11 @@ char* ServerMediaSession::generateSDPDescription() {
     for (subsession = fSubsessionsHead; subsession != NULL;
 	 subsession = subsession->fNext) {
       mediaSDP += strlen(mediaSDP);
-      sprintf(mediaSDP, "%s", subsession->sdpLines(*this));
+      sprintf(mediaSDP, "%s", subsession->sdpLines());
     }
   } while (0);
 
-  delete[] sourceFilterLine; delete[] ourIPAddressStr;
+  delete[] rangeLine; delete[] sourceFilterLine; delete[] ourIPAddressStr;
   return sdp;
 }
 
@@ -316,6 +317,7 @@ void ServerMediaSubsessionIterator::reset() {
 
 ServerMediaSubsession::ServerMediaSubsession(UsageEnvironment& env)
   : Medium(env),
+    fParentSession(NULL), fServerAddressForSDP(0), fPortNumForSDP(0),
     fNext(NULL), fTrackNumber(0), fTrackId(NULL) {
 }
 
@@ -362,11 +364,19 @@ float ServerMediaSubsession::duration() const {
   return 0.0;
 }
 
+void ServerMediaSubsession::setServerAddressAndPortForSDP(netAddressBits addressBits,
+							  portNumBits portBits) {
+  fServerAddressForSDP = addressBits;
+  fPortNumForSDP = portBits;
+}
+
 char const*
-ServerMediaSubsession::rangeSDPLine(ServerMediaSession& parentSession) const {
+ServerMediaSubsession::rangeSDPLine() const {
+  if (fParentSession == NULL) return NULL;
+
   // If all of our parent's subsessions have the same duration
-  // (as indicated by "parentSession.duration() < 0"), there's no "a=range:" line:
-  if (parentSession.duration() >= 0.0) return strDup("");
+  // (as indicated by "fParentSession->duration() >= 0"), there's no "a=range:" line:
+  if (fParentSession->duration() >= 0.0) return strDup("");
 
   // Use our own duration for a "a=range:" line:
   float ourDuration = duration();

@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2004 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2005 Live Networks, Inc.  All rights reserved.
 // A file source that is a plain byte stream (rather than frames)
 // C++ header
 
@@ -34,12 +34,24 @@ public:
   // "preferredFrameSize" == 0 means 'no preference'
   // "playTimePerFrame" is in microseconds
 
+  static ByteStreamFileSource* createNew(UsageEnvironment& env,
+					 FILE* fid,
+					 Boolean deleteFidOnClose = False,
+					 unsigned preferredFrameSize = 0,
+					 unsigned playTimePerFrame = 0);
+      // an alternative version of "createNew()" that's used if you already have
+      // an open file.
+
   unsigned fileSize() const { return fFileSize; }
       // 0 means zero-length, unbounded, or unknown
 
+  void seekToByteAbsolute(u_int64_t byteNumber);
+  void seekToByteRelative(int64_t offset);
+
 protected:
   ByteStreamFileSource(UsageEnvironment& env,
-		       FILE* fid, unsigned preferredFrameSize,
+		       FILE* fid, Boolean deleteFidOnClose,
+		       unsigned preferredFrameSize,
 		       unsigned playTimePerFrame);
 	// called only by createNew()
 
@@ -54,6 +66,7 @@ private:
   unsigned fPlayTimePerFrame;
   unsigned fLastPlayTime;
   unsigned fFileSize;
+  Boolean fDeleteFidOnClose;
 };
 
 #endif

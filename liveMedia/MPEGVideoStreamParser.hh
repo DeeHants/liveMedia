@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2004 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2005 Live Networks, Inc.  All rights reserved.
 // An abstract parser for MPEG video streams
 // C++ header
 
@@ -68,8 +68,8 @@ protected:
 
   // Save data until we see a sync word (0x000001xx):
   void saveToNextCode(u_int32_t& curWord) {
-    save4Bytes(curWord);
-    curWord = get4Bytes();
+    saveByte(curWord>>24);
+    curWord = (curWord<<8)|get1Byte();
     while ((curWord&0xFFFFFF00) != 0x00000100) {
       if ((unsigned)(curWord&0xFF) > 1) {
 	// a sync word definitely doesn't begin anywhere in "curWord"
@@ -86,7 +86,7 @@ protected:
 
   // Skip data until we see a sync word (0x000001xx):
   void skipToNextCode(u_int32_t& curWord) {
-    curWord = get4Bytes();
+    curWord = (curWord<<8)|get1Byte();
     while ((curWord&0xFFFFFF00) != 0x00000100) {
       if ((unsigned)(curWord&0xFF) > 1) {
 	// a sync word definitely doesn't begin anywhere in "curWord"

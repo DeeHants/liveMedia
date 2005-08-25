@@ -13,7 +13,7 @@ You should have received a copy of the GNU Lesser General Public License
 along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
-// Copyright (c) 1996-2004, Live Networks, Inc.  All rights reserved
+// Copyright (c) 1996-2005, Live Networks, Inc.  All rights reserved
 // A common framework, used for the "openRTSP" and "playSIP" applications
 // Implementation
 
@@ -108,7 +108,7 @@ void usage() {
        << " [-u <username> <password>"
 	   << (allowProxyServers ? " [<proxy-server> [<proxy-server-port>]]" : "")
        << "]" << (supportCodecSelection ? " [-A <audio-codec-rtp-payload-format-code>|-D <mime-subtype-name>]" : "")
-       << " [-w <width> -h <height>] [-f <frames-per-second>] [-y] [-H] [-Q [<measurement-interval>]] [-F <filename-prefix>] [-b <file-sink-buffer-size>] [-B <input-socket-buffer-size>] [-m] <url> (or " << progName << " -o [-V] <url>)\n";
+       << " [-w <width> -h <height>] [-f <frames-per-second>] [-y] [-H] [-Q [<measurement-interval>]] [-F <filename-prefix>] [-b <file-sink-buffer-size>] [-B <input-socket-buffer-size>] [-I <input-interface-ip-address>] [-m] <url> (or " << progName << " -o [-V] <url>)\n";
   //##### Add "-R <dest-rtsp-url>" #####
   shutdown();
 }
@@ -169,6 +169,17 @@ int main(int argc, char** argv) {
 
     case 'i': { // output an AVI file (to stdout)
       outputAVIFile = True;
+      break;
+    }
+
+    case 'I': { // specify input interface... 
+      NetAddressList addresses(argv[2]);
+      if (addresses.numAddresses() == 0) {
+	*env << "Failed to find network address for \"" << argv[2] << "\"";
+	break;
+      }
+      ReceivingInterfaceAddr = *(unsigned*)(addresses.firstAddress()->data());
+      ++argv; --argc;
       break;
     }
 
@@ -483,10 +494,10 @@ int main(int argc, char** argv) {
       } else {
 	*env << clientProtocolName << " \"OPTIONS\" request returned: "
 	     << optionsResponse << "\n";
-	delete[] optionsResponse;
       }
       shutdown();
     }
+    delete[] optionsResponse;
   }
 
   // Open the URL, to get a SDP description:

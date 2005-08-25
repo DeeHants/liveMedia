@@ -14,12 +14,13 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2004 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2005 Live Networks, Inc.  All rights reserved.
 // A generic RTSP client
 // Implementation
 
 #include "RTSPClient.hh"
-#include "GroupsockHelper.hh"
+#include "Base64.hh"
+#include <GroupsockHelper.hh>
 #include "our_md5.h"
 #ifdef SUPPORT_REAL_RTSP
 #include "../RealRTSP/include/RealRTSP.hh"
@@ -30,6 +31,42 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #else
 #define _strncasecmp strncasecmp
 #endif
+
+// Experimental support for temporarily setting the locale (e.g., to POSIX,
+// for parsing or printing floating-point numbers in protocol headers).
+#ifdef USE_LOCALE
+#include <locale.h>
+#else
+#ifndef LC_NUMERIC
+#define LC_NUMERIC 0
+#endif
+#endif
+
+class Locale {
+public:
+  Locale(char const* newLocale, int category = LC_NUMERIC)
+    : fCategory(category) {
+#ifdef USE_LOCALE
+    fPrevLocale = strDup(setlocale(category, NULL));
+    setlocale(category, newLocale);
+#endif
+  }
+
+  virtual ~Locale() {
+#ifdef USE_LOCALE
+    if (fPrevLocale != NULL) {
+      setlocale(fCategory, fPrevLocale);
+      delete[] fPrevLocale;
+    }
+#endif
+  }
+
+private:
+  int fCategory;
+  char* fPrevLocale;
+};
+
+
 
 ////////// RTSPClient //////////
 
@@ -71,7 +108,8 @@ RTSPClient::RTSPClient(UsageEnvironment& env,
 #ifdef SUPPORT_REAL_RTSP
     fRealChallengeStr(NULL), fRealETagStr(NULL),
 #endif
-    fServerIsKasenna(False), fKasennaContentType(NULL)
+    fServerIsKasenna(False), fKasennaContentType(NULL),
+    fServerIsMicrosoft(False)
 {
   fResponseBufferSize = 20000;
   fResponseBuffer = new char[fResponseBufferSize+1];
@@ -108,8 +146,8 @@ Boolean RTSPClient::isRTSPClient() const {
 
 void RTSPClient::resetTCPSockets() {
   if (fInputSocketNum >= 0) {
-    ::_close(fInputSocketNum);
-    if (fOutputSocketNum != fInputSocketNum) ::_close(fOutputSocketNum);
+    ::closeSocket(fInputSocketNum);
+    if (fOutputSocketNum != fInputSocketNum) ::closeSocket(fOutputSocketNum);
   }
   fInputSocketNum = fOutputSocketNum = -1;
 }
@@ -245,6 +283,7 @@ char* RTSPClient::describeURL(char const* url, Authenticator* authenticator,
 	}
       } else if (sscanf(lineStart, "Server: %s", serverType) == 1) {
 	if (strncmp(serverType, "Kasenna", 7) == 0) fServerIsKasenna = True;
+	if (strncmp(serverType, "WMServer", 8) == 0) fServerIsMicrosoft = True;
 #ifdef SUPPORT_REAL_RTSP
       } else if (sscanf(lineStart, "ETag: %s", fRealETagStr) == 1) {
 #endif
@@ -451,8 +490,8 @@ char* RTSPClient
     return describeResult;
   }
 
-  // The "realm" and "nonce" fields should have been filled in:
-  if (authenticator.realm() == NULL || authenticator.nonce() == NULL) {
+  // The "realm" field should have been filled in:
+  if (authenticator.realm() == NULL) {
     // We haven't been given enough information to try again, so fail:
     return NULL;
   }
@@ -632,8 +671,8 @@ Boolean RTSPClient
     return True;
   }
 
-  // The "realm" and "nonce" fields should have been filled in:
-  if (authenticator.realm() == NULL || authenticator.nonce() == NULL) {
+  // The "realm" field should have been filled in:
+  if (authenticator.realm() == NULL) {
     // We haven't been given enough information to try again, so fail:
     return False;
   }
@@ -655,6 +694,14 @@ Boolean RTSPClient::setupMediaSubsession(MediaSubsession& subsession,
 					 Boolean streamUsingTCP) {
   char* cmd = NULL;
   char* setupStr = NULL;
+
+  if (fServerIsMicrosoft) {
+    // Microsoft doesn't send the right endTime on live streams.  Correct this:
+    char *tmpStr = subsession.parentSession().mediaSessionType();
+    if (tmpStr != NULL && strncmp(tmpStr, "broadcast", 9) == 0) {
+      subsession.parentSession().playEndTime() = 0.0;
+    }
+  }
 
   do {
     // Construct the SETUP command:
@@ -901,6 +948,7 @@ static char* createScaleString(float scale, float currentScale) {
     // This is the default value; we don't need a "Scale:" header:
     buf[0] = '\0';
   } else {
+    Locale("POSIX");
     sprintf(buf, "Scale: %f\r\n", scale);
   }
 
@@ -914,15 +962,19 @@ static char* createRangeString(float start, float end) {
     buf[0] = '\0';
   } else if (end < 0) {
     // There's no end time:
+    Locale("POSIX");
     sprintf(buf, "Range: npt=%.3f-\r\n", start);
   } else {
     // There's both a start and an end time; include them both in the "Range:" hdr
+    Locale("POSIX");
     sprintf(buf, "Range: npt=%.3f-%.3f\r\n", start, end);
   }
 
   return strDup(buf);
 }
       
+static char const* NoSessionErr = "No RTSP session is currently in progress\n";
+
 Boolean RTSPClient::playMediaSession(MediaSession& session,
 				     float start, float end, float scale) {
 #ifdef SUPPORT_REAL_RTSP
@@ -937,7 +989,7 @@ Boolean RTSPClient::playMediaSession(MediaSession& session,
   do {
     // First, make sure that we have a RTSP session in progress
     if (fLastSessionId == NULL) {
-      envir().setResultMsg("No RTSP session is currently in progress\n");
+      envir().setResultMsg(NoSessionErr);
       break;
     }
 
@@ -1015,7 +1067,7 @@ Boolean RTSPClient::playMediaSubsession(MediaSubsession& subsession,
   do {
     // First, make sure that we have a RTSP session in progress
     if (subsession.sessionId == NULL) {
-      envir().setResultMsg("No RTSP session is currently in progress\n");
+      envir().setResultMsg(NoSessionErr);
       break;
     }
 
@@ -1107,7 +1159,7 @@ Boolean RTSPClient::pauseMediaSession(MediaSession& session) {
   do {
     // First, make sure that we have a RTSP session in progress
     if (fLastSessionId == NULL) {
-      envir().setResultMsg("No RTSP session is currently in progress\n");
+      envir().setResultMsg(NoSessionErr);
       break;
     }
 
@@ -1162,7 +1214,7 @@ Boolean RTSPClient::pauseMediaSubsession(MediaSubsession& subsession) {
   do {
     // First, make sure that we have a RTSP session in progress
     if (subsession.sessionId == NULL) {
-      envir().setResultMsg("No RTSP session is currently in progress\n");
+      envir().setResultMsg(NoSessionErr);
       break;
     }
     
@@ -1221,7 +1273,7 @@ Boolean RTSPClient::recordMediaSubsession(MediaSubsession& subsession) {
   do {
     // First, make sure that we have a RTSP session in progress
     if (subsession.sessionId == NULL) {
-      envir().setResultMsg("No RTSP session is currently in progress\n");
+      envir().setResultMsg(NoSessionErr);
       break;
     }
 
@@ -1281,7 +1333,7 @@ Boolean RTSPClient::setMediaSessionParameter(MediaSession& /*session*/,
   do {
     // First, make sure that we have a RTSP session in progress
     if (fLastSessionId == NULL) {
-      envir().setResultMsg("No RTSP session is currently in progress\n");
+      envir().setResultMsg(NoSessionErr);
       break;
     }
 
@@ -1338,7 +1390,7 @@ Boolean RTSPClient::teardownMediaSession(MediaSession& /*session*/) {
   do {
     // First, make sure that we have a RTSP session in progreee
     if (fLastSessionId == NULL) {
-      envir().setResultMsg("No RTSP session is currently in progress\n");
+      envir().setResultMsg(NoSessionErr);
       break;
     }
 
@@ -1397,7 +1449,7 @@ Boolean RTSPClient::teardownMediaSubsession(MediaSubsession& subsession) {
   do {
     // First, make sure that we have a RTSP session in progreee
     if (subsession.sessionId == NULL) {
-      envir().setResultMsg("No RTSP session is currently in progress\n");
+      envir().setResultMsg(NoSessionErr);
       break;
     }
 
@@ -1518,6 +1570,9 @@ Boolean RTSPClient::parseRTSPURL(UsageEnvironment& env, char const* url,
     char const* from = &url[prefixLength];
 
     // Skip over any "<username>[:<password>]@"
+    // (Note that this code fails if <password> contains '@' or '/', but
+    // given that these characters can also appear in <etc>, there seems to
+    // be no way of unambiguously parsing that situation.)
     char const* from1 = from;
     while (*from1 != '\0' && *from1 != '/') {
       if (*from1 == '@') {
@@ -1618,20 +1673,36 @@ Boolean RTSPClient::parseRTSPURLUsernamePassword(char const* url,
 char*
 RTSPClient::createAuthenticatorString(Authenticator const* authenticator,
 				      char const* cmd, char const* url) {
-  if (authenticator != NULL
-      && authenticator->realm() != NULL  && authenticator->nonce() != NULL
+  if (authenticator != NULL && authenticator->realm() != NULL
       && authenticator->username() != NULL && authenticator->password() != NULL) {
     // We've been provided a filled-in authenticator, so use it:
-    char* const authFmt = "Authorization: Digest username=\"%s\", realm=\"%s\", nonce=\"%s\", uri=\"%s\", response=\"%s\"\r\n";
-    char const* response = authenticator->computeDigestResponse(cmd, url);
-    unsigned authBufSize = strlen(authFmt)
-      + strlen(authenticator->username()) + strlen(authenticator->realm())
-      + strlen(authenticator->nonce()) + strlen(url) + strlen(response);
-    char* authenticatorStr = new char[authBufSize];
-    sprintf(authenticatorStr, authFmt,
-	    authenticator->username(), authenticator->realm(),
-	    authenticator->nonce(), url, response);
-    authenticator->reclaimDigestResponse(response);
+    char* authenticatorStr;
+    if (authenticator->nonce() != NULL) { // Digest authentication
+      char* const authFmt =
+	"Authorization: Digest username=\"%s\", realm=\"%s\", "
+	"nonce=\"%s\", uri=\"%s\", response=\"%s\"\r\n";
+      char const* response = authenticator->computeDigestResponse(cmd, url);
+      unsigned authBufSize = strlen(authFmt)
+	+ strlen(authenticator->username()) + strlen(authenticator->realm())
+	+ strlen(authenticator->nonce()) + strlen(url) + strlen(response);
+      authenticatorStr = new char[authBufSize];
+      sprintf(authenticatorStr, authFmt,
+	      authenticator->username(), authenticator->realm(),
+	      authenticator->nonce(), url, response);
+      authenticator->reclaimDigestResponse(response);
+    } else { // Basic authentication
+      char* const authFmt = "Authorization: Basic %s\r\n";
+      char* usernamePassword
+	= new char[strlen(authenticator->username())
+		  + strlen(authenticator->password()) + 2];
+      sprintf(usernamePassword, "%s:%s",
+	      authenticator->username(), authenticator->password());
+      char* response = base64Encode(usernamePassword);
+      unsigned authBufSize = strlen(authFmt) + strlen(response);
+      authenticatorStr = new char[authBufSize];
+      sprintf(authenticatorStr, authFmt, response);
+      delete[] response; delete[] usernamePassword;
+    }
 
     return authenticatorStr;
   }
@@ -1662,48 +1733,15 @@ void RTSPClient::checkForAuthenticationFailure(unsigned responseCode,
 		 realm, nonce) == 2) {
 	authenticator->setRealmAndNonce(realm, nonce);
 	foundAuthenticateHeader = True;
+      } else if (sscanf(lineStart, "WWW-Authenticate: Basic realm=\"%[^\"]\"",
+		 realm) == 1) {
+	authenticator->setRealmAndNonce(realm, NULL); // Basic authentication
+	foundAuthenticateHeader = True;
       }
       delete[] realm; delete[] nonce;
       if (foundAuthenticateHeader) break;
     } 
   }
-}
-
-static const char base64Char[] =
-"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-static char* base64Encode(char const* orig) {
-  if (orig == NULL) return NULL;
-
-  unsigned const origLength = strlen(orig);
-  unsigned const numOrig24BitValues = origLength/3;
-  Boolean havePadding = origLength > numOrig24BitValues*3;
-  Boolean havePadding2 = origLength == numOrig24BitValues*3 + 2;
-  unsigned const numResultBytes = 4*(numOrig24BitValues + havePadding);
-  char* result = new char[numResultBytes+1]; // allow for trailing '\0'
-  
-  // Map each full group of 3 input bytes into 4 output base-64 characters:
-  unsigned i;
-  for (i = 0; i < numOrig24BitValues; ++i) {
-    result[4*i+0] = base64Char[(orig[3*i]>>2)&0x3F];
-    result[4*i+1] = base64Char[(((orig[3*i]&0x3)<<4) | (orig[3*i+1]>>4))&0x3F];
-    result[4*i+2] = base64Char[((orig[3*i+1]<<2) | (orig[3*i+2]>>6))&0x3F];
-    result[4*i+3] = base64Char[orig[3*i+2]&0x3F];
-  }
-
-  // Now, take padding into account.  (Note: i == numOrig24BitValues)
-  if (havePadding) {
-    result[4*i+0] = base64Char[(orig[3*i]>>2)&0x3F];
-    result[4*i+1] = base64Char[(((orig[3*i]&0x3)<<4) | (orig[3*i+1]>>4))&0x3F];
-    if (havePadding2) {
-      result[4*i+2] = base64Char[(orig[3*i+1]<<2)&0x3F];
-    } else {
-      result[4*i+2] = '=';
-    }
-    result[4*i+3] = '=';
-  }
-
-  return result;
 }
 
 Boolean RTSPClient::sendRequest(char const* requestString, char const* tag,
@@ -1957,6 +1995,7 @@ Boolean RTSPClient::parseScaleHeader(char const* line, float& scale) {
   if (_strncasecmp(line, "Scale: ", 7) != 0) return False;
   line += 7;
 
+  Locale("POSIX");
   return sscanf(line, "%f", &scale) == 1;
 }
 

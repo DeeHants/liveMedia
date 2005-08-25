@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2004 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2005 Live Networks, Inc.  All rights reserved.
 // RTP Sinks
 // Implementation
 
@@ -51,39 +51,37 @@ RTPSink::RTPSink(UsageEnvironment& env,
   : MediaSink(env), fRTPInterface(this, rtpGS),
     fRTPPayloadType(rtpPayloadType),
     fPacketCount(0), fOctetCount(0), fTotalOctetCount(0),
-    fTimestampFrequency(rtpTimestampFrequency),
+    fTimestampFrequency(rtpTimestampFrequency), fHaveComputedFirstTimestamp(False),
     fNumChannels(numChannels) {
   fRTPPayloadFormatName
     = strDup(rtpPayloadFormatName == NULL ? "???" : rtpPayloadFormatName);
   gettimeofday(&fCreationTime, NULL);
   fTotalOctetCountStartTime = fCreationTime;
 
-  fSeqNo = (unsigned short)our_random();
-  fSSRC = (unsigned)our_random();
-  fTimestampBase = (unsigned)our_random();
+  fSeqNo = (u_int16_t)our_random();
+  fSSRC = our_random32();
+  fTimestampBase = our_random32();
   fCurrentTimestamp = fTimestampBase;
 
   fTransmissionStatsDB = new RTPTransmissionStatsDB(*this);
 }
 
 RTPSink::~RTPSink() {
+  delete fTransmissionStatsDB;
   delete[] (char*)fRTPPayloadFormatName;
 }
 
-u_int32_t RTPSink::convertToRTPTimestamp(struct timeval tv, Boolean isFirstTime) {
-  if (isFirstTime) {
+u_int32_t RTPSink::convertToRTPTimestamp(struct timeval tv) {
+  u_int32_t rtpTimestampIncrement = timevalToTimestamp(tv);
+
+  if (!fHaveComputedFirstTimestamp) {
     // Make the first timestamp the same as the current "fTimestampBase", so that
     // timestamps begin with the value we promised when this "RTPSink" was created:
-    u_int32_t rtpTimestampIncrement = timevalToTimestamp(tv);
     fTimestampBase -= rtpTimestampIncrement;
+    fHaveComputedFirstTimestamp = True;
   }
 
-  return convertToRTPTimestamp(tv);
-}
-
-u_int32_t RTPSink::convertToRTPTimestamp(struct timeval tv) const {
-  u_int32_t const rtpTimestamp = fTimestampBase + timevalToTimestamp(tv);
-
+  u_int32_t const rtpTimestamp = fTimestampBase + rtpTimestampIncrement;
 #ifdef DEBUG_TIMESTAMPS
   fprintf(stderr, "fTimestampBase: 0x%08x, tv: %lu.%06ld\n\t=> RTP timestamp: 0x%08x\n",
 	  fTimestampBase, tv.tv_sec, tv.tv_usec, rtpTimestamp);
@@ -95,13 +93,12 @@ u_int32_t RTPSink::convertToRTPTimestamp(struct timeval tv) const {
 
 u_int32_t RTPSink::timevalToTimestamp(struct timeval tv) const {
   u_int32_t timestamp = (fTimestampFrequency*tv.tv_sec);
-  timestamp += (unsigned)((2.0*fTimestampFrequency*tv.tv_usec + 1000000.0)/2000000);
+  timestamp += (u_int32_t)((2.0*fTimestampFrequency*tv.tv_usec + 1000000.0)/2000000);
        // note: rounding
   return timestamp;
 }
 
-void RTPSink::getTotalBitrate(unsigned& outNumBytes,
-			      double& outElapsedTime) {
+void RTPSink::getTotalBitrate(unsigned& outNumBytes, double& outElapsedTime) {
   struct timeval timeNow;
   gettimeofday(&timeNow, NULL);
 
@@ -169,7 +166,7 @@ RTPTransmissionStatsDB::~RTPTransmissionStatsDB() {
 }
 
 void RTPTransmissionStatsDB
-::noteIncomingRR(unsigned SSRC, struct sockaddr_in const& lastFromAddress,
+::noteIncomingRR(u_int32_t SSRC, struct sockaddr_in const& lastFromAddress,
                  unsigned lossStats, unsigned lastPacketNumReceived,
                  unsigned jitter, unsigned lastSRTime, unsigned diffSR_RRTime) {
   RTPTransmissionStats* stats = lookup(SSRC);
@@ -189,10 +186,13 @@ void RTPTransmissionStatsDB
                         lastSRTime, diffSR_RRTime);
 }
 
-void RTPTransmissionStatsDB::removeRecord(unsigned SSRC) {
-  long SSRC_long = (long)SSRC;
-  if (fTable->Remove((char const*)SSRC_long)) {
+void RTPTransmissionStatsDB::removeRecord(u_int32_t SSRC) {
+  RTPTransmissionStats* stats = lookup(SSRC);
+  if (stats != NULL) {
+    long SSRC_long = (long)SSRC;
+    fTable->Remove((char const*)SSRC_long);
     --fNumReceivers;
+    delete stats;
   }
 }
 
@@ -212,12 +212,12 @@ RTPTransmissionStatsDB::Iterator::next() {
   return (RTPTransmissionStats*)(fIter->next(key));
 }
 
-RTPTransmissionStats* RTPTransmissionStatsDB::lookup(unsigned SSRC) const {
+RTPTransmissionStats* RTPTransmissionStatsDB::lookup(u_int32_t SSRC) const {
   long SSRC_long = (long)SSRC;
   return (RTPTransmissionStats*)(fTable->Lookup((char const*)SSRC_long));
 }
 
-void RTPTransmissionStatsDB::add(unsigned SSRC, RTPTransmissionStats* stats) {
+void RTPTransmissionStatsDB::add(u_int32_t SSRC, RTPTransmissionStats* stats) {
   long SSRC_long = (long)SSRC;
   fTable->Add((char const*)SSRC_long, stats);
   ++fNumReceivers;
@@ -226,7 +226,7 @@ void RTPTransmissionStatsDB::add(unsigned SSRC, RTPTransmissionStats* stats) {
 
 ////////// RTPTransmissionStats //////////
 
-RTPTransmissionStats::RTPTransmissionStats(RTPSink& rtpSink, unsigned SSRC)
+RTPTransmissionStats::RTPTransmissionStats(RTPSink& rtpSink, u_int32_t SSRC)
   : fOurRTPSink(rtpSink), fSSRC(SSRC), fLastPacketNumReceived(0),
     fPacketLossRatio(0), fTotNumPacketsLost(0), fJitter(0),
     fLastSRTime(0), fDiffSR_RRTime(0), fFirstPacket(True),

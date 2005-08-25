@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2004 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2005 Live Networks, Inc.  All rights reserved.
 // RTP Sinks
 // C++ header
 
@@ -36,10 +36,9 @@ public:
 			      RTPSink*& resultSink);
 
   // used by RTCP:
-  unsigned SSRC() const {return fSSRC;}
+  u_int32_t SSRC() const {return fSSRC;}
      // later need a means of changing the SSRC if there's a collision #####
-  u_int32_t convertToRTPTimestamp(struct timeval tv, Boolean isFirstTime);
-  u_int32_t convertToRTPTimestamp(struct timeval tv) const;
+  u_int32_t convertToRTPTimestamp(struct timeval tv);
   unsigned packetCount() const {return fPacketCount;}
   unsigned octetCount() const {return fOctetCount;}
 
@@ -61,8 +60,8 @@ public:
   virtual char const* auxSDPLine();
       // optional SDP line (e.g. a=fmtp:...)
 
-  unsigned short currentSeqNo() const { return fSeqNo; }
-  unsigned currentTimestamp() const { return fCurrentTimestamp; }
+  u_int16_t currentSeqNo() const { return fSeqNo; }
+  u_int32_t currentTimestamp() const { return fCurrentTimestamp; }
 
   RTPTransmissionStatsDB& transmissionStatsDB() const {
     return *fTransmissionStatsDB;
@@ -86,7 +85,7 @@ public:
 protected:
   RTPSink(UsageEnvironment& env,
 	  Groupsock* rtpGS, unsigned char rtpPayloadType,
-	  unsigned rtpTimestampFrequency,
+	  u_int32_t rtpTimestampFrequency,
 	  char const* rtpPayloadFormatName,
 	  unsigned numChannels);
 	// abstract base class
@@ -97,8 +96,8 @@ protected:
   unsigned char fRTPPayloadType;
   unsigned fPacketCount, fOctetCount, fTotalOctetCount /*incl RTP hdr*/;
   struct timeval fTotalOctetCountStartTime;
-  unsigned fCurrentTimestamp;
-  unsigned short fSeqNo;
+  u_int32_t fCurrentTimestamp;
+  u_int16_t fSeqNo;
 
 private:
   // redefined virtual functions:
@@ -108,7 +107,9 @@ private:
   u_int32_t timevalToTimestamp(struct timeval tv) const;
 
 private:
-  unsigned fSSRC, fTimestampBase, fTimestampFrequency;
+  u_int32_t fSSRC, fTimestampBase;
+  unsigned fTimestampFrequency;
+  Boolean fHaveComputedFirstTimestamp;
   char const* fRTPPayloadFormatName;
   unsigned fNumChannels;
   struct timeval fCreationTime;
@@ -136,12 +137,14 @@ public:
   };
 
   // The following is called whenever a RTCP RR packet is received: 
-  void noteIncomingRR(unsigned SSRC, struct sockaddr_in const& lastFromAddress,
+  void noteIncomingRR(u_int32_t SSRC, struct sockaddr_in const& lastFromAddress,
                       unsigned lossStats, unsigned lastPacketNumReceived,
                       unsigned jitter, unsigned lastSRTime, unsigned diffSR_RRTime);
 
   // The following is called when a RTCP BYE packet is received:
-  void removeRecord(unsigned SSRC);
+  void removeRecord(u_int32_t SSRC);
+
+  RTPTransmissionStats* lookup(u_int32_t SSRC) const;
 
 private: // constructor and destructor, called only by RTPSink:
   friend class RTPSink;
@@ -149,19 +152,18 @@ private: // constructor and destructor, called only by RTPSink:
   virtual ~RTPTransmissionStatsDB();
 
 private:
-  RTPTransmissionStats* lookup(unsigned SSRC) const;
-  void add(unsigned SSRC, RTPTransmissionStats* stats);
+  void add(u_int32_t SSRC, RTPTransmissionStats* stats);
 
 private:
   friend class Iterator;
   unsigned fNumReceivers;
-  RTPSink& fOurRTPSink;
+    RTPSink& fOurRTPSink;
   HashTable* fTable;
 };
 
 class RTPTransmissionStats {
 public:
-  unsigned SSRC() const {return fSSRC;}
+  u_int32_t SSRC() const {return fSSRC;}
   struct sockaddr_in const& lastFromAddress() const {return fLastFromAddress;}
   unsigned lastPacketNumReceived() const {return fLastPacketNumReceived;}
   unsigned firstPacketNumReported() const {return fFirstPacketNumReported;}
@@ -187,7 +189,7 @@ public:
 private:
   // called only by RTPTransmissionStatsDB:
   friend class RTPTransmissionStatsDB;
-  RTPTransmissionStats(RTPSink& rtpSink, unsigned SSRC);
+  RTPTransmissionStats(RTPSink& rtpSink, u_int32_t SSRC);
   virtual ~RTPTransmissionStats();
 
   void noteIncomingRR(struct sockaddr_in const& lastFromAddress,
@@ -197,7 +199,7 @@ private:
 
 private:
   RTPSink& fOurRTPSink;
-  unsigned fSSRC;
+  u_int32_t fSSRC;
   struct sockaddr_in fLastFromAddress;
   unsigned fLastPacketNumReceived;
   u_int8_t fPacketLossRatio;

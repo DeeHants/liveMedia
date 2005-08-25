@@ -14,11 +14,12 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2004 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2005 Live Networks, Inc.  All rights reserved.
 // A simple UDP source, where every UDP payload is a complete frame
 // Implementation
 
 #include "BasicUDPSource.hh"
+#include <GroupsockHelper.hh>
 
 BasicUDPSource* BasicUDPSource::createNew(UsageEnvironment& env,
 					Groupsock* inputGS) {
@@ -27,6 +28,8 @@ BasicUDPSource* BasicUDPSource::createNew(UsageEnvironment& env,
 
 BasicUDPSource::BasicUDPSource(UsageEnvironment& env, Groupsock* inputGS)
   : FramedSource(env), fInputGS(inputGS) {
+  // Try to use a large receive buffer (in the OS):
+  increaseReceiveBufferTo(env, inputGS->socketNum(), 50*1024);
 }
 
 BasicUDPSource::~BasicUDPSource(){

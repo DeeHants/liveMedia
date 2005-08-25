@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2004 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2005 Live Networks, Inc.  All rights reserved.
 // A RTSP server
 // C++ header
 
@@ -57,18 +57,27 @@ protected:
   Boolean fPasswordsAreMD5;
 };
 
+#define RTSP_BUFFER_SIZE 10000 // for incoming requests, and outgoing responses
+
 class RTSPServer: public Medium {
 public:
   static RTSPServer* createNew(UsageEnvironment& env, Port ourPort = 554,
-			       UserAuthenticationDatabase* authDatabase = NULL);
-      // if ourPort.num() == 0, we'll choose the port number
+			       UserAuthenticationDatabase* authDatabase = NULL,
+			       unsigned reclamationTestSeconds = 0);
+      // If ourPort.num() == 0, we'll choose the port number
       // Note: The caller is responsible for reclaiming "authDatabase"
+      // If "reclamationTestSeconds" > 0, then the "RTSPClientSession" state for
+      //     each client will get reclaimed (and the corresponding RTP stream(s)
+      //     torn down) if no RTSP commands - or RTCP "RR" packets - from the
+      //     client are received in at least "reclamationTestSeconds" seconds.
 
   static Boolean lookupByName(UsageEnvironment& env, char const* name,
 			      RTSPServer*& resultServer);
 
   void addServerMediaSession(ServerMediaSession* serverMediaSession);
+  ServerMediaSession* lookupServerMediaSession(char const* streamName);
   void removeServerMediaSession(ServerMediaSession* serverMediaSession);
+  void removeServerMediaSession(char const* streamName);
 
   char* rtspURL(ServerMediaSession const* serverMediaSession) const;
       // returns a "rtsp://" URL that could be used to access the
@@ -79,7 +88,8 @@ public:
 protected:
   RTSPServer(UsageEnvironment& env,
 	     int ourSocket, Port ourPort,
-	     UserAuthenticationDatabase* authDatabase);
+	     UserAuthenticationDatabase* authDatabase,
+	     unsigned reclamationTestSeconds);
       // called only by createNew();
   virtual ~RTSPServer();
 
@@ -122,6 +132,8 @@ private:
 			char const* cseq, char const* fullRequestStr);
     void handleCmd_PAUSE(ServerMediaSubsession* subsession,
 			 char const* cseq);
+    void handleCmd_GET_PARAMETER(ServerMediaSubsession* subsession,
+				 char const* cseq, char const* fullRequestStr);
     Boolean authenticationOK(char const* cmdName, char const* cseq,
 			     char const* fullRequestStr);
     Boolean parseRequestString(char const *reqStr, unsigned reqStrSize,
@@ -133,6 +145,9 @@ private:
 			       unsigned resultURLSuffixMaxSize, 
 			       char* resultCSeq,
 			       unsigned resultCSeqMaxSize); 
+    void noteLiveness();
+    static void noteClientLiveness(RTSPClientSession* clientSession);
+    static void livenessTimeoutTask(RTSPClientSession* clientSession);
 
   private:
     RTSPServer& fOurServer;
@@ -140,8 +155,10 @@ private:
     ServerMediaSession* fOurServerMediaSession;
     int fClientSocket;
     struct sockaddr_in fClientAddr;
-    unsigned char fBuffer[10000];
-    Boolean fSessionIsActive;
+    TaskToken fLivenessCheckTask;
+    unsigned char fBuffer[RTSP_BUFFER_SIZE];
+    unsigned char fResponseBuffer[RTSP_BUFFER_SIZE];
+    Boolean fSessionIsActive, fStreamAfterSETUP;
     Authenticator fCurrentAuthenticator; // used if access control is needed
     unsigned char fTCPStreamIdCount; // used for (optional) RTP/TCP
     unsigned fNumStreamStates; 
@@ -156,6 +173,7 @@ private:
   int fServerSocket;
   Port fServerPort;
   UserAuthenticationDatabase* fAuthDB;
+  unsigned fReclamationTestSeconds;
   HashTable* fServerMediaSessions;
   unsigned fSessionIdCounter;
 };

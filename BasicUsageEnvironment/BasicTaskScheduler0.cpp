@@ -43,7 +43,8 @@ private:
 
 ////////// BasicTaskScheduler0 //////////
 
-BasicTaskScheduler0::BasicTaskScheduler0() {
+BasicTaskScheduler0::BasicTaskScheduler0()
+  : fLastHandledSocketNum(-1) {
   fReadHandlers = new HandlerSet;
 }
 
@@ -64,6 +65,7 @@ TaskToken BasicTaskScheduler0::scheduleDelayedTask(int microseconds,
 
 void BasicTaskScheduler0::unscheduleDelayedTask(TaskToken& prevTask) {
   DelayQueueEntry* alarmHandler = fDelayQueue.removeEntry((long)prevTask);
+  prevTask = NULL;
   delete alarmHandler;
 }
 

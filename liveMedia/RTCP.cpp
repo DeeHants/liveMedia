@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2004 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2005 Live Networks, Inc.  All rights reserved.
 // RTCP
 // Implementation
 
@@ -120,7 +120,7 @@ static unsigned const preferredPacketSize = 1000; // bytes
 RTCPInstance::RTCPInstance(UsageEnvironment& env, Groupsock* RTCPgs,
 			   unsigned totSessionBW,
 			   unsigned char const* cname,
-			   RTPSink const* sink, RTPSource const* source,
+			   RTPSink* sink, RTPSource const* source,
 			   Boolean isSSMSource)
   : Medium(env), fRTCPInterface(this, RTCPgs), fTotSessionBW(totSessionBW),
     fSink(sink), fSource(source), fIsSSMSource(isSSMSource),
@@ -129,7 +129,9 @@ RTCPInstance::RTCPInstance(UsageEnvironment& env, Groupsock* RTCPgs,
     fLastSentSize(0), fLastReceivedSize(0), fLastReceivedSSRC(0),
     fTypeOfEvent(EVENT_UNKNOWN), fTypeOfPacket(PACKET_UNKNOWN_TYPE),
     fHaveJustSentPacket(False), fLastPacketSentSize(0),
-    fByeHandlerTask(NULL), fByeHandlerClientData(NULL) {
+    fByeHandlerTask(NULL), fByeHandlerClientData(NULL),
+    fSRHandlerTask(NULL), fSRHandlerClientData(NULL),
+    fRRHandlerTask(NULL), fRRHandlerClientData(NULL) {
 #ifdef DEBUG
   fprintf(stderr, "RTCPInstance[%p]::RTCPInstance()\n", this);
 #endif
@@ -179,8 +181,7 @@ RTCPInstance::~RTCPInstance() {
 RTCPInstance* RTCPInstance::createNew(UsageEnvironment& env, Groupsock* RTCPgs,
 				      unsigned totSessionBW,
 				      unsigned char const* cname,
-				      RTPSink const* sink,
-				      RTPSource const* source,
+				      RTPSink* sink, RTPSource const* source,
 				      Boolean isSSMSource) {
   return new RTCPInstance(env, RTCPgs, totSessionBW, cname, sink, source,
 			  isSSMSource);
@@ -213,9 +214,21 @@ unsigned RTCPInstance::numMembers() const {
   return fKnownMembers->numMembers();
 }
 
-void RTCPInstance::setByeHandler(TaskFunc* handlerTask, void* clientData) {
+void RTCPInstance::setByeHandler(TaskFunc* handlerTask, void* clientData,
+				 Boolean handleActiveParticipantsOnly) {
   fByeHandlerTask = handlerTask;
   fByeHandlerClientData = clientData;
+  fByeHandleActiveParticipantsOnly = handleActiveParticipantsOnly;
+}
+
+void RTCPInstance::setSRHandler(TaskFunc* handlerTask, void* clientData) {
+  fSRHandlerTask = handlerTask;
+  fSRHandlerClientData = clientData;
+}
+
+void RTCPInstance::setRRHandler(TaskFunc* handlerTask, void* clientData) {
+  fRRHandlerTask = handlerTask;
+  fRRHandlerClientData = clientData;
 }
 
 void RTCPInstance::setStreamSocket(int sockNum,
@@ -349,6 +362,10 @@ void RTCPInstance::incomingReportHandler1() {
 					  NTPmsw, NTPlsw, rtpTimestamp);
 	  }
 	  ADVANCE(8); // skip over packet count, octet count
+
+	  // If a 'SR handler' was set, call it now:
+	  if (fSRHandlerTask != NULL) (*fSRHandlerTask)(fSRHandlerClientData);
+
 	  // The rest of the SR is handled like a RR (so, no "break;" here)
 	}
         case RTCP_PT_RR: {
@@ -383,6 +400,11 @@ void RTCPInstance::incomingReportHandler1() {
             ADVANCE(reportBlocksSize);
           }
 
+	  if (pt == RTCP_PT_RR) { // i.e., we didn't fall through from 'SR'
+	    // If a 'RR handler' was set, call it now:
+	    if (fRRHandlerTask != NULL) (*fRRHandlerTask)(fRRHandlerClientData);
+	  }
+
 	  subPacketOK = True;
 	  typeOfPacket = PACKET_RTCP_REPORT;
 	  break;
@@ -393,7 +415,12 @@ void RTCPInstance::incomingReportHandler1() {
 #endif
 	  // If a 'BYE handler' was set, call it now:
 	  TaskFunc* byeHandler = fByeHandlerTask;
-	  if (byeHandler != NULL) {
+	  if (byeHandler != NULL
+	      && (!fByeHandleActiveParticipantsOnly
+		  || (fSource != NULL
+		      && fSource->receptionStatsDB().lookup(reportSenderSSRC) != NULL)
+		  || (fSink != NULL
+		      && fSink->transmissionStatsDB().lookup(reportSenderSSRC) != NULL))) {
 	    fByeHandlerTask = NULL;
 	        // we call this only once by default 
 	    (*byeHandler)(fByeHandlerClientData);

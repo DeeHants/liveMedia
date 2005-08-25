@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2004 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2005 Live Networks, Inc.  All rights reserved.
 // Inclusion of header files representing the interface
 // for the entire library
 //
@@ -52,8 +52,10 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include "MPEG1or2VideoRTPSource.hh"
 #include "MPEG2TransportStreamFromPESSource.hh"
 #include "MPEG2TransportStreamFramer.hh"
+#include "ADTSAudioFileSource.hh"
 #include "H261VideoRTPSource.hh"
 #include "H263plusVideoRTPSource.hh"
+#include "H264VideoRTPSource.hh"
 #include "MP3HTTPSource.hh"
 #include "MP3ADU.hh"
 #include "MP3ADUinterleaving.hh"
@@ -86,6 +88,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include "MPEG1or2VideoFileServerMediaSubsession.hh"
 #include "MPEG1or2FileServerDemux.hh"
 #include "MPEG2TransportFileServerMediaSubsession.hh"
+#include "ADTSAudioFileServerMediaSubsession.hh"
 #include "DarwinInjector.hh"
 
 #endif

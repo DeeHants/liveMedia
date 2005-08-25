@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2004 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2005 Live Networks, Inc.  All rights reserved.
 // A filter that breaks up an AC3 audio elementary stream into frames
 // C++ header
 
@@ -32,6 +32,8 @@ public:
 	    unsigned char streamCode = 0x80);
 
   unsigned samplingRate();
+
+  void flushInput(); // called if there is a discontinuity (seeking) in the input
 
 private:
   AC3AudioStreamFramer(UsageEnvironment& env, FramedSource* inputSource,

@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2004 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2005 Live Networks, Inc.  All rights reserved.
 // A simplified version of "MPEG1or2VideoStreamFramer" that takes only
 // complete, discrete frames (rather than an arbitrary byte stream) as input.
 // This avoids the parsing and data copying overhead of the full
@@ -27,6 +27,8 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #ifndef _MPEG1or2_VIDEO_STREAM_FRAMER_HH
 #include "MPEG1or2VideoStreamFramer.hh"
 #endif
+
+#define VSH_MAX_SIZE 1000
 
 class MPEG1or2VideoStreamDiscreteFramer: public MPEG1or2VideoStreamFramer {
 public:
@@ -59,6 +61,14 @@ private:
 private:
   struct timeval fLastNonBFramePresentationTime;
   unsigned fLastNonBFrameTemporal_reference;
+
+  // A saved copy of the most recently seen 'video_sequence_header',
+  // in case we need to insert it into the stream periodically:
+  unsigned char fSavedVSHBuffer[VSH_MAX_SIZE];
+  unsigned fSavedVSHSize;
+  double fSavedVSHTimestamp;
+  Boolean fIFramesOnly;
+  double fVSHPeriod;
 };
 
 #endif
