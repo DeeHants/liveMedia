@@ -115,7 +115,7 @@ RTSPClient::RTSPClient(UsageEnvironment& env,
   fResponseBuffer = new char[fResponseBufferSize+1];
 
   // Set the "User-Agent:" header to use in each request:
-  char const* const libName = "LIVE.COM Streaming Media v";
+  char const* const libName = "LIVE555 Streaming Media v";
   char const* const libVersionStr = LIVEMEDIA_LIBRARY_VERSION_STRING;
   char const* libPrefix; char const* libSuffix;
   if (applicationName == NULL || applicationName[0] == '\0') {
@@ -691,7 +691,8 @@ Boolean RTSPClient
 
 Boolean RTSPClient::setupMediaSubsession(MediaSubsession& subsession,
 					 Boolean streamOutgoing,
-					 Boolean streamUsingTCP) {
+					 Boolean streamUsingTCP,
+					 Boolean forceMulticastOnUnspecified) {
   char* cmd = NULL;
   char* setupStr = NULL;
 
@@ -748,8 +749,9 @@ Boolean RTSPClient::setupMediaSubsession(MediaSubsession& subsession,
 	  rtcpNumber = fTCPStreamIdCount++;
 	} else { // normal RTP streaming
 	  unsigned connectionAddress = subsession.connectionEndpointAddress();
-	  transportTypeStr
-	    = IsMulticastAddress(connectionAddress) ? ";multicast" : ";unicast";
+	  Boolean requestMulticastStreaming = IsMulticastAddress(connectionAddress)
+	    || (connectionAddress == 0 && forceMulticastOnUnspecified);
+	  transportTypeStr = requestMulticastStreaming ? ";multicast" : ";unicast";
 	  portTypeStr = ";client_port";
 	  rtpNumber = subsession.clientPortNum();
 	  if (rtpNumber == 0) {
@@ -825,8 +827,9 @@ Boolean RTSPClient::setupMediaSubsession(MediaSubsession& subsession,
 	rtcpNumber = fTCPStreamIdCount++;
       } else { // normal RTP streaming      
 	unsigned connectionAddress = subsession.connectionEndpointAddress();
-	transportTypeStr
-	  = IsMulticastAddress(connectionAddress) ? ";multicast" : ";unicast";
+	Boolean requestMulticastStreaming = IsMulticastAddress(connectionAddress)
+	  || (connectionAddress == 0 && forceMulticastOnUnspecified);
+	transportTypeStr = requestMulticastStreaming ? ";multicast" : ";unicast";
 	portTypeStr = ";client_port";
 	rtpNumber = subsession.clientPortNum();
 	if (rtpNumber == 0) {
@@ -1385,7 +1388,157 @@ Boolean RTSPClient::setMediaSessionParameter(MediaSession& /*session*/,
   return False;
 }
 
-Boolean RTSPClient::teardownMediaSession(MediaSession& /*session*/) {
+Boolean RTSPClient::getMediaSessionParameter(MediaSession& /*session*/,
+					     char const* parameterName,
+					     char*& parameterValue) {
+  char* cmd = NULL;
+  do {
+    // First, make sure that we have a RTSP session in progress
+    if (fLastSessionId == NULL) {
+      envir().setResultMsg(NoSessionErr);
+      break;
+    }
+
+    // Send the GET_PARAMETER command:
+    // First, construct an authenticator string:
+    char* authenticatorStr
+      = createAuthenticatorString(&fCurrentAuthenticator,
+				  "GET_PARAMETER", fBaseURL);
+
+    char* const cmdFmt =
+      "GET_PARAMETER %s RTSP/1.0\r\n"
+      "CSeq: %d\r\n"
+      "Session: %s\r\n"
+      "%s"
+      "%s"
+      "Content-type: text/parameters\r\n"
+      "Content-length: %d\r\n\r\n"
+      "%s\r\n"
+      "\r\n";
+
+    unsigned cmdSize = strlen(cmdFmt)
+      + strlen(fBaseURL)
+      + 20 /* max int len */
+      + strlen(fLastSessionId)
+      + strlen(authenticatorStr)
+      + fUserAgentHeaderStrSize
+      + strlen(parameterName);
+    cmd = new char[cmdSize];
+    sprintf(cmd, cmdFmt,
+	    fBaseURL,
+	    ++fCSeq,
+	    fLastSessionId,
+	    authenticatorStr,
+	    fUserAgentHeaderStr,
+            strlen(parameterName)+2,
+	    parameterName);
+    delete[] authenticatorStr;
+
+    if (!sendRequest(cmd, "GET_PARAMETER")) break;
+
+    // Get the response from the server:
+    // This section was copied/modified from the RTSPClient::describeURL func
+    unsigned bytesRead; unsigned responseCode;
+    char* firstLine; char* nextLineStart;
+    if (!getResponse("GET_PARAMETER", bytesRead, responseCode, firstLine, 
+            nextLineStart, False /*don't check for response code 200*/)) break;
+
+    // Inspect the first line to check whether it's a result code that
+    // we can handle.
+    if (responseCode != 200) {
+      envir().setResultMsg("cannot handle GET_PARAMETER response: ", firstLine);
+      break;
+    }
+
+    // Skip every subsequent header line, until we see a blank line
+    // The remaining data is assumed to be the parameter data that we want.
+    char* serverType = new char[fResponseBufferSize]; // ensures enough space
+    int contentLength = -1;
+    char* lineStart;
+    while (1) {
+      lineStart = nextLineStart;
+      if (lineStart == NULL) break;
+
+      nextLineStart = getLine(lineStart);
+      if (lineStart[0] == '\0') break; // this is a blank line
+
+      if (sscanf(lineStart, "Content-Length: %d", &contentLength) == 1
+	  || sscanf(lineStart, "Content-length: %d", &contentLength) == 1) {
+	if (contentLength < 0) {
+	  envir().setResultMsg("Bad \"Content-length:\" header: \"",
+			       lineStart, "\"");
+	  break;
+	}
+      }
+    } 
+    delete[] serverType;
+
+    // We're now at the end of the response header lines
+    if (lineStart == NULL) {
+      envir().setResultMsg("no content following header lines: ", 
+                            fResponseBuffer);
+      break;
+    }
+
+    // Use the remaining data as the parameter data, but first, check
+    // the "Content-length:" header (if any) that we saw.  We may need to
+    // read more data, or we may have extraneous data in the buffer.
+    char* bodyStart = nextLineStart;
+    if (contentLength >= 0) {
+      // We saw a "Content-length:" header
+      unsigned numBodyBytes = &firstLine[bytesRead] - bodyStart;
+      if (contentLength > (int)numBodyBytes) {
+	// We need to read more data.  First, make sure we have enough
+	// space for it:
+	unsigned numExtraBytesNeeded = contentLength - numBodyBytes;
+	unsigned remainingBufferSize
+	  = fResponseBufferSize - (bytesRead + (firstLine - fResponseBuffer));
+	if (numExtraBytesNeeded > remainingBufferSize) {
+	  char tmpBuf[200];
+	  sprintf(tmpBuf, "Read buffer size (%d) is too small for \"Content-length:\" %d (need a buffer size of >= %d bytes\n",
+		  fResponseBufferSize, contentLength,
+		  fResponseBufferSize + numExtraBytesNeeded - remainingBufferSize);
+	  envir().setResultMsg(tmpBuf);
+	  break;
+	}
+
+	// Keep reading more data until we have enough:
+	if (fVerbosityLevel >= 1) {
+	  envir() << "Need to read " << numExtraBytesNeeded
+		  << " extra bytes\n";
+	}
+	while (numExtraBytesNeeded > 0) {
+	  struct sockaddr_in fromAddress;
+	  char* ptr = &firstLine[bytesRead];
+	  int bytesRead2 = readSocket(envir(), fInputSocketNum, (unsigned char*)ptr,
+				      numExtraBytesNeeded, fromAddress);
+	  if (bytesRead2 < 0) break;
+	  ptr[bytesRead2] = '\0';
+	  if (fVerbosityLevel >= 1) {
+	    envir() << "Read " << bytesRead2 << " extra bytes: "
+		    << ptr << "\n";
+	  }
+
+	  bytesRead += bytesRead2;
+	  numExtraBytesNeeded -= bytesRead2;
+	}
+	if (numExtraBytesNeeded > 0) break; // one of the reads failed
+      }
+    }
+
+    if (!parseGetParameterHeader(bodyStart, parameterName, parameterValue)) 
+      break;
+
+    delete[] cmd;
+    return True;
+  } while (0);
+  
+  delete[] cmd;
+
+  return False;
+}
+
+Boolean RTSPClient::teardownMediaSession(MediaSession& session) {
   char* cmd = NULL;
   do {
     // First, make sure that we have a RTSP session in progreee
@@ -1432,6 +1585,14 @@ Boolean RTSPClient::teardownMediaSession(MediaSession& /*session*/) {
       char* firstLine; char* nextLineStart;
       if (!getResponse("TEARDOWN", bytesRead, responseCode, firstLine, nextLineStart)) break;
       
+      // Run through each subsession, deleting its "sessionId":
+      MediaSubsessionIterator iter(session);
+      MediaSubsession* subsession;
+      while ((subsession = iter.next()) != NULL) {
+	delete[] (char*)subsession->sessionId;
+	subsession->sessionId = NULL;
+      }
+
       delete[] fLastSessionId; fLastSessionId = NULL;
       // we're done with this session
     }
@@ -1931,6 +2092,10 @@ Boolean RTSPClient::parseTransportResponse(char const* line,
   Boolean foundServerPortNum = False;
   Boolean foundChannelIds = False;
   unsigned rtpCid, rtcpCid;
+  Boolean isMulticast = True; // by default
+  char* foundDestinationStr = NULL;
+  portNumBits multicastPortNumRTP, multicastPortNumRTCP;
+  Boolean foundMulticastPortNum = False;
 
   // First, check for "Transport:"
   if (_strncasecmp(line, "Transport: ", 11) != 0) return False;
@@ -1949,6 +2114,14 @@ Boolean RTSPClient::parseTransportResponse(char const* line,
       rtpChannelId = (unsigned char)rtpCid;
       rtcpChannelId = (unsigned char)rtcpCid;
       foundChannelIds = True;
+    } else if (strcmp(field, "unicast") == 0) {
+      isMulticast = False;
+    } else if (_strncasecmp(field, "destination=", 12) == 0) {
+      delete[] foundDestinationStr;
+      foundDestinationStr = strDup(field+12);
+    } else if (sscanf(field, "port=%hu-%hu",
+		      &multicastPortNumRTP, &multicastPortNumRTCP) == 2) {
+      foundMulticastPortNum = True;
     }
 
     fields += strlen(field);
@@ -1956,6 +2129,17 @@ Boolean RTSPClient::parseTransportResponse(char const* line,
     if (fields[0] == '\0') break;
   }
   delete[] field;
+
+  // If we're multicast, and have a "destination=" (multicast) address, then use this
+  // as the 'server' address (because some weird servers don't specify the multicast
+  // address earlier, in the "DESCRIBE" response's SDP:
+  if (isMulticast && foundDestinationStr != NULL && foundMulticastPortNum) {
+    delete[] foundServerAddressStr;
+    serverAddressStr = foundDestinationStr;
+    serverPortNum = multicastPortNumRTP;
+    return True;
+  }
+  delete[] foundDestinationStr;
 
   if (foundServerPortNum || foundChannelIds) {
     serverAddressStr = foundServerAddressStr;
@@ -1997,6 +2181,44 @@ Boolean RTSPClient::parseScaleHeader(char const* line, float& scale) {
 
   Locale("POSIX");
   return sscanf(line, "%f", &scale) == 1;
+}
+
+Boolean RTSPClient::parseGetParameterHeader(char const* line, 
+                                            const char* param,
+                                            char*& value) {
+  if ((param != NULL && param[0] != '\0') && 
+      (line != NULL && line[0] != '\0')) {
+    int param_len = strlen(param);
+    int line_len = strlen(line);
+
+    if (_strncasecmp(line, param, param_len) != 0) {
+      if (fVerbosityLevel >= 1) {
+        envir() << "Parsing for \""<< param << "\" and didn't find it, return False\n";
+      }
+      return False;
+    }
+    
+    // Strip \r\n from the end if it's there.
+    if (line[line_len-2] == '\r' && line[line_len-1] == '\n') {
+      line_len -= 2;
+    }
+
+    // Look for ": " appended to our requested parameter
+    if (line[param_len] == ':' && line[param_len+1] == ' ') {
+      // But make sure ": " wasn't in our actual serach param before adjusting
+      if (param[param_len-2] != ':' && param[param_len-1] != ' ') {
+        if (fVerbosityLevel >= 1) {
+          envir() << "Found \": \" appended to parameter\n";
+        }
+        param_len += 2;
+      }
+    }
+    
+    // Get the string we want out of the line:
+    value = strDup(line+param_len);
+    return True;
+  }
+  return False;
 }
 
 Boolean RTSPClient::setupHTTPTunneling(char const* urlSuffix) {
@@ -2078,7 +2300,7 @@ Boolean RTSPClient::setupHTTPTunneling(char const* urlSuffix) {
       + strlen(urlSuffix)
       + fUserAgentHeaderStrSize
       + strlen(sessionCookie);
-    cmd = new char[cmdSize];
+    delete[] cmd; cmd = new char[cmdSize];
     sprintf(cmd, postCmdFmt,
 	    urlSuffix,
 	    fUserAgentHeaderStr,

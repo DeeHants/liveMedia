@@ -136,6 +136,7 @@ void MPEG2TransportStreamFramer::updateTSPacketDurationEstimate(unsigned char* p
   u_int8_t const adaptation_field_length = pkt[4];
   if (adaptation_field_length == 0) return;
 
+  u_int8_t const discontinuity_indicator = pkt[5]&0x80;
   u_int8_t const pcrFlag = pkt[5]&0x10;
   if (pcrFlag == 0) return; // no PCR
 
@@ -154,6 +155,9 @@ void MPEG2TransportStreamFramer::updateTSPacketDurationEstimate(unsigned char* p
     // We're seeing this PID's PCR for the first time:
     pidStatus = new PIDStatus;
     fPIDStatusTable->Add((char*)pid, pidStatus);
+#ifdef DEBUG_PCR
+    fprintf(stderr, "FIRST PCR 0x%08x+%d:%03x == %f, pkt #%lu\n", pcrBaseHigh, pkt[10]>>7, pcrExt, clock, fTSPacketCount);
+#endif
   } else {
     // We've seen this PID's PCR before; update our per-packet duration estimate:
     double durationPerPacket
@@ -161,13 +165,14 @@ void MPEG2TransportStreamFramer::updateTSPacketDurationEstimate(unsigned char* p
     if (pidStatus->hasJustStarted) {
       fTSPacketDurationEstimate = durationPerPacket;
       pidStatus->hasJustStarted = False;
-    } else {
+    } else if (discontinuity_indicator == 0 && durationPerPacket >= 0.0) {
       fTSPacketDurationEstimate
 	= durationPerPacket*NEW_DURATION_WEIGHT
 	+ fTSPacketDurationEstimate*(1-NEW_DURATION_WEIGHT);
     }
+    // else the PCR has a discontinuity from its previous value; don't use it now
 #ifdef DEBUG_PCR
-    fprintf(stderr, "PCR 0x%08x+%d == %f => this duration %f, new estimate %f\n", pcrBaseHigh, pkt[10]>>7, clock, durationPerPacket, fTSPacketDurationEstimate);
+    fprintf(stderr, "PCR 0x%08x+%d:%03x == %f, pkt #%lu, discon %d => this duration %f, new estimate %f\n", pcrBaseHigh, pkt[10]>>7, pcrExt, clock, fTSPacketCount, discontinuity_indicator != 0, durationPerPacket, fTSPacketDurationEstimate);
 #endif
   }
 

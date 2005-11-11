@@ -76,9 +76,14 @@ public:
 
   Boolean setupMediaSubsession(MediaSubsession& subsession,
 			       Boolean streamOutgoing = False,
-			       Boolean streamUsingTCP = False);
+			       Boolean streamUsingTCP = False,
+			       Boolean forceMulticastOnUnspecified = False);
       // Issues a RTSP "SETUP" command on "subsession".
       // Returns True iff this command succeeds
+      // If "forceMulticastOnUnspecified" is True (and "streamUsingTCP" is False),
+      // then the client will request a multicast stream if the media address
+      // in the original SDP response was unspecified (i.e., 0.0.0.0).
+      // Note, however, that not all servers will support this. 
 
   Boolean playMediaSession(MediaSession& session,
 			   float start = 0.0f, float end = -1.0f,
@@ -109,6 +114,12 @@ public:
 				   char const* parameterName,
 				   char const* parameterValue);
       // Issues a RTSP "SET_PARAMETER" command on "subsession".
+      // Returns True iff this command succeeds
+
+  Boolean getMediaSessionParameter(MediaSession& session,
+				   char const* parameterName,
+				   char*& parameterValue);
+      // Issues a RTSP "GET_PARAMETER" command on "subsession".
       // Returns True iff this command succeeds
 
   Boolean teardownMediaSession(MediaSession& session);
@@ -168,6 +179,9 @@ private:
   Boolean parseRTPInfoHeader(char const* line, unsigned& trackId,
 			     u_int16_t& seqNum, u_int32_t& timestamp);
   Boolean parseScaleHeader(char const* line, float& scale);
+  Boolean parseGetParameterHeader(char const* line, 
+                                  const char* param,
+                                  char*& value);
   void constructSubsessionURL(MediaSubsession const& subsession,
 			      char const*& prefix,
 			      char const*& separator,

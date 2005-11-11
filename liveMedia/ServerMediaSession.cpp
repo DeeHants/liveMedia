@@ -52,7 +52,7 @@ Boolean ServerMediaSession
   return True;
 }
 
-static char const* const libNameStr = "LIVE.COM Streaming Media v";
+static char const* const libNameStr = "LIVE555 Streaming Media v";
 char const* const libVersionStr = LIVEMEDIA_LIBRARY_VERSION_STRING;
 
 ServerMediaSession::ServerMediaSession(UsageEnvironment& env,
@@ -73,7 +73,7 @@ ServerMediaSession::ServerMediaSession(UsageEnvironment& env,
 }
 
 ServerMediaSession::~ServerMediaSession() {
-  delete fSubsessionsHead;
+  Medium::close(fSubsessionsHead);
   delete[] fStreamName;
   delete[] fInfoSDPString;
   delete[] fDescriptionSDPString;
@@ -323,7 +323,7 @@ ServerMediaSubsession::ServerMediaSubsession(UsageEnvironment& env)
 
 ServerMediaSubsession::~ServerMediaSubsession() {
   delete[] (char*)fTrackId;
-  delete fNext;
+  Medium::close(fNext);
 }
 
 char const* ServerMediaSubsession::trackId() {

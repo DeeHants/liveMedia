@@ -23,8 +23,8 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 
 #define TRANSPORT_PACKET_SIZE 188
 
-#define PAT_FREQUENCY 1000 // # of packets between Program Association Tables
-#define PMT_FREQUENCY 5000 // # of packets between Program Map Tables
+#define PAT_FREQUENCY 100 // # of packets between Program Association Tables
+#define PMT_FREQUENCY 500 // # of packets between Program Map Tables
 
 #define PID_TABLE_SIZE 256
 
@@ -48,7 +48,7 @@ void MPEG2TransportStreamMultiplexor::doGetNextFrame() {
   if (fInputBufferBytesUsed >= fInputBufferSize) {
     // No more bytes are available from the current buffer.
     // Arrange to read a new one.
-    awaitNewBuffer();
+    awaitNewBuffer(fInputBuffer);
     return;
   }
 
@@ -99,7 +99,6 @@ void MPEG2TransportStreamMultiplexor
     fInputBufferSize = 0; // then, ignore the buffer
   } else {
     fCurrentPID = stream_id;
-    if (fPCR_PID == 0) fPCR_PID = fCurrentPID; // use this stream's SCR for PCR
     
     // Set the stream's type:
     u_int8_t& streamType = fPIDState[fCurrentPID].streamType; // alias
@@ -111,6 +110,9 @@ void MPEG2TransportStreamMultiplexor
 	streamType = mpegVersion == 1 ? 3 : 4;
       } else if ((stream_id&0xF0) == 0xE0) { // video
 	streamType = mpegVersion == 1 ? 1 : 2;
+	if (fPCR_PID == 0) fPCR_PID = fCurrentPID; // use this stream's SCR for PCR
+      } else if (stream_id == 0xBD) { // private_stream1 (usually AC-3)
+	streamType = 0x06; // for DVB; for ATSC, use 0x81 
       } else { // something else, e.g., AC-3 uses private_stream1 (0xBD)
 	streamType = 0x81; // private 
       }
@@ -135,7 +137,8 @@ void MPEG2TransportStreamMultiplexor
     fNumTruncatedBytes = TRANSPORT_PACKET_SIZE;
   } else {
     fFrameSize = TRANSPORT_PACKET_SIZE;
-    Boolean willAddPCR = pid == fPCR_PID && startPositionInBuffer == 0;
+    Boolean willAddPCR = pid == fPCR_PID && startPositionInBuffer == 0
+      && !(fPCR.highBit == 0 && fPCR.remainingBits == 0 && fPCR.extension == 0);
     unsigned const numBytesAvailable = bufferSize - startPositionInBuffer;
     unsigned numHeaderBytes = 4; // by default
     unsigned numPCRBytes = 0; // by default

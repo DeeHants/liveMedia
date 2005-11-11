@@ -40,7 +40,6 @@ RTSPServer::createNew(UsageEnvironment& env, Port ourPort,
 		      UserAuthenticationDatabase* authDatabase,
 		      unsigned reclamationTestSeconds) {
   int ourSocket = -1;
-  RTSPServer* newServer = NULL;
 
   do {
     int ourSocket = setUpOurSocket(env, ourPort);
@@ -51,7 +50,6 @@ RTSPServer::createNew(UsageEnvironment& env, Port ourPort,
   } while (0);
 
   if (ourSocket != -1) ::closeSocket(ourSocket);
-  delete newServer;
   return NULL;
 }
 
@@ -93,7 +91,7 @@ void RTSPServer::removeServerMediaSession(ServerMediaSession* serverMediaSession
 
   fServerMediaSessions->Remove(serverMediaSession->streamName());
   if (serverMediaSession->referenceCount() == 0) {
-    delete serverMediaSession;
+    Medium::close(serverMediaSession);
   } else {
     serverMediaSession->deleteWhenUnreferenced() = True;
   }
@@ -656,7 +654,7 @@ void RTSPServer::RTSPClientSession
   // Look up information for the specified subsession (track):
   ServerMediaSubsession* subsession = NULL;
   unsigned streamNum;
-  if (trackId != NULL) { // normal case
+  if (trackId != NULL && trackId[0] != '\0') { // normal case
     for (streamNum = 0; streamNum < fNumStreamStates; ++streamNum) {
       subsession = fStreamStates[streamNum].subsession;
       if (subsession != NULL && strcmp(trackId, subsession->trackId()) == 0) break;
@@ -742,11 +740,11 @@ void RTSPServer::RTSPClientSession
 	     "RTSP/1.0 200 OK\r\n"
 	     "CSeq: %s\r\n"
 	     "%s"
-	     "Transport: RTP/AVP;multicast;destination=%s;port=%d;ttl=%d\r\n"
+	     "Transport: RTP/AVP;multicast;destination=%s;port=%d-%d;ttl=%d\r\n"
 	     "Session: %d\r\n\r\n",
 	     cseq,
 	     dateHeader(),
-	     our_inet_ntoa(destinationAddr), ntohs(serverRTPPort.num()), destinationTTL,
+	     our_inet_ntoa(destinationAddr), ntohs(serverRTPPort.num()), ntohs(serverRTCPPort.num()), destinationTTL,
 	     fOurSessionId);
   } else {
     switch (streamingMode) {
@@ -1302,7 +1300,7 @@ void RTSPServer::RTSPClientSession
 UserAuthenticationDatabase::UserAuthenticationDatabase(char const* realm,
 						       Boolean passwordsAreMD5)
   : fTable(HashTable::create(STRING_HASH_KEYS)),
-    fRealm(strDup(realm == NULL ? "LIVE.COM Streaming Media" : realm)),
+    fRealm(strDup(realm == NULL ? "LIVE555 Streaming Media" : realm)),
     fPasswordsAreMD5(passwordsAreMD5) {
 }
 

@@ -21,11 +21,11 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #ifndef _ADTS_AUDIO_FILE_SOURCE_HH
 #define _ADTS_AUDIO_FILE_SOURCE_HH
 
-#ifndef _FRAMED_SOURCE_HH
-#include "FramedSource.hh"
+#ifndef _FRAMED_FILE_SOURCE_HH
+#include "FramedFileSource.hh"
 #endif
 
-class ADTSAudioFileSource: public FramedSource {
+class ADTSAudioFileSource: public FramedFileSource {
 public:
   static ADTSAudioFileSource* createNew(UsageEnvironment& env,
 				       char const* fileName);
@@ -47,7 +47,6 @@ private:
   virtual void doGetNextFrame();
 
 private:
-  FILE* fFid;
   unsigned fSamplingFrequency;
   unsigned fNumChannels;
   unsigned fuSecsPerFrame;
