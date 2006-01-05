@@ -70,7 +70,9 @@ public:
       // without using "password", then (if we get an Unauthorized
       // response) with an authentication response computed from "password"
 
-  char* sendOptionsCmd(char const* url);
+  char* sendOptionsCmd(char const* url,
+		       char* username = NULL, char* password = NULL,
+		       Authenticator* authenticator = NULL);
       // Issues a RTSP "OPTIONS" command
       // Returns a string containing the list of options, or NULL
 
@@ -157,7 +159,7 @@ private:
   void reset();
   void resetTCPSockets();
 
-  Boolean openConnectionFromURL(char const* url);
+  Boolean openConnectionFromURL(char const* url, Authenticator* authenticator);
   char* createAuthenticatorString(Authenticator const* authenticator,
 				  char const* cmd, char const* url);
   static void checkForAuthenticationFailure(unsigned responseCode,
@@ -186,7 +188,7 @@ private:
 			      char const*& prefix,
 			      char const*& separator,
 			      char const*& suffix);
-  Boolean setupHTTPTunneling(char const* urlSuffix);
+  Boolean setupHTTPTunneling(char const* urlSuffix, Authenticator* authenticator);
 
 private:
   int fVerbosityLevel;

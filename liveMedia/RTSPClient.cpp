@@ -196,7 +196,7 @@ char* RTSPClient::describeURL(char const* url, Authenticator* authenticator,
       return result;
     }
 
-    if (!openConnectionFromURL(url)) break;
+    if (!openConnectionFromURL(url, authenticator)) break;
 
     // Send the DESCRIBE command:
 
@@ -381,7 +381,7 @@ char* RTSPClient::describeURL(char const* url, Authenticator* authenticator,
     if (fServerIsKasenna && strncmp(bodyStart, "<MediaDescription>", 18) == 0) {
       // Translate from x-rtsp-mh to sdp
       int videoPid, audioPid;
-      unsigned mh_duration;
+      u_int64_t mh_duration;
       char* currentWord = new char[fResponseBufferSize]; // ensures enough space
       delete[] fKasennaContentType;
       fKasennaContentType = new char[fResponseBufferSize]; // ensures enough space
@@ -410,7 +410,7 @@ char* RTSPClient::describeURL(char const* url, Authenticator* authenticator,
 	    currentPos += strlen(currentWord) + 1;
 	    sscanf(currentPos, "%s", currentWord);
 	    currentPos += strlen(currentWord) + 1;
-	    sscanf(currentPos, "%d", &mh_duration);
+	    sscanf(currentPos, "%llu", &mh_duration);
 	    currentPos += 3;
           }
 	  
@@ -447,7 +447,7 @@ char* RTSPClient::describeURL(char const* url, Authenticator* authenticator,
 	"c=IN IP4 %u.%u.%u.%u\r\n"
 	"t=0 0\r\n"
 	"a=control:*\r\n"
-	"a=range:npt=0-%u\r\n"
+	"a=range:npt=0-%llu\r\n"
 	"m=video 1554 RAW/RAW/UDP 33\r\n"
 	"a=control:trackID=%d\r\n";
       unsigned sdpBufSize = strlen(sdpFmt)
@@ -460,7 +460,7 @@ char* RTSPClient::describeURL(char const* url, Authenticator* authenticator,
 	      byte1, byte2, byte3, byte4,
 	      url,
 	      byte1, byte2, byte3, byte4,
-	      (unsigned)(mh_duration/1000000),
+	      mh_duration/1000000,
 	      videoPid);
       
       char* result = strDup(sdpBuf);
@@ -506,16 +506,53 @@ char* RTSPClient
   return describeResult;
 }
 
-char* RTSPClient::sendOptionsCmd(char const* url) {
+char* RTSPClient::sendOptionsCmd(char const* url,
+				 char* username, char* password,
+				 Authenticator* authenticator) {
   char* result = NULL;
   char* cmd = NULL;
+  Boolean haveAllocatedAuthenticator = False;
   do {
-    if (!openConnectionFromURL(url)) break;
+    if (authenticator == NULL) {
+      // First, check whether "url" contains a username:password to be used
+      // (and no username,password pair was supplied separately):
+      if (username == NULL && password == NULL
+	  && parseRTSPURLUsernamePassword(url, username, password)) {
+	Authenticator authenticator;
+	authenticator.setUsernameAndPassword(username, password);
+	result = sendOptionsCmd(url, username, password, &authenticator);
+	delete[] username; delete[] password; // they were dynamically allocated
+	break;
+      } else if (username != NULL && password != NULL) {
+	// Use the separately supplied username and password:
+	authenticator = new Authenticator;
+	haveAllocatedAuthenticator = True;
+	authenticator->setUsernameAndPassword(username, password);
+
+	result = sendOptionsCmd(url, username, password, authenticator);
+	if (result != NULL) break; // We are already authorized
+
+	// The "realm" field should have been filled in:
+	if (authenticator->realm() == NULL) {
+	  // We haven't been given enough information to try again, so fail:
+	  break;
+	}
+	// Try again:
+      }
+    }
+
+    if (!openConnectionFromURL(url, authenticator)) break;
 
     // Send the OPTIONS command:
+
+    // First, construct an authenticator string:
+    char* authenticatorStr
+      = createAuthenticatorString(authenticator, "OPTIONS", url);
+
     char* const cmdFmt =
       "OPTIONS %s RTSP/1.0\r\n"
       "CSeq: %d\r\n"
+      "%s"
       "%s"
 #ifdef SUPPORT_REAL_RTSP
       REAL_OPTIONS_HEADERS
@@ -524,19 +561,28 @@ char* RTSPClient::sendOptionsCmd(char const* url) {
     unsigned cmdSize = strlen(cmdFmt)
       + strlen(url)
       + 20 /* max int len */
+      + strlen(authenticatorStr)
       + fUserAgentHeaderStrSize;
     cmd = new char[cmdSize];
     sprintf(cmd, cmdFmt,
 	    url,
 	    ++fCSeq,
+	    authenticatorStr,
 	    fUserAgentHeaderStr);
+    delete[] authenticatorStr;
 
     if (!sendRequest(cmd, "OPTIONS")) break;
 
     // Get the response from the server:
     unsigned bytesRead; unsigned responseCode;
     char* firstLine; char* nextLineStart;
-    if (!getResponse("OPTIONS", bytesRead, responseCode, firstLine, nextLineStart)) break;
+    if (!getResponse("OPTIONS", bytesRead, responseCode, firstLine, nextLineStart,
+		     False /*don't check for response code 200*/)) break;
+    if (responseCode != 200) {
+      checkForAuthenticationFailure(responseCode, nextLineStart, authenticator);
+      envir().setResultMsg("cannot handle OPTIONS response: ", firstLine);
+      break;
+    }
 
     // Look for a "Public:" header (which will contain our result str):
     char* lineStart;
@@ -557,6 +603,7 @@ char* RTSPClient::sendOptionsCmd(char const* url) {
   } while (0);
 
   delete[] cmd;
+  if (haveAllocatedAuthenticator) delete authenticator;
   return result;
 }
 
@@ -605,7 +652,7 @@ Boolean RTSPClient::announceSDPDescription(char const* url,
 					   Authenticator* authenticator) {
   char* cmd = NULL;
   do {
-    if (!openConnectionFromURL(url)) break;
+    if (!openConnectionFromURL(url, authenticator)) break;
 
     // Send the ANNOUNCE command:
 
@@ -1668,7 +1715,8 @@ Boolean RTSPClient::teardownMediaSubsession(MediaSubsession& subsession) {
   return False;
 }
 
-Boolean RTSPClient::openConnectionFromURL(char const* url) {
+Boolean RTSPClient
+::openConnectionFromURL(char const* url, Authenticator* authenticator) {
   do {
     // Set this as our base URL:
     delete[] fBaseURL; fBaseURL = strDup(url); if (fBaseURL == NULL) break;
@@ -1689,18 +1737,15 @@ Boolean RTSPClient::openConnectionFromURL(char const* url) {
       if (fInputSocketNum < 0) break;
     
       // Connect to the remote endpoint:
-      struct sockaddr_in remoteName;
-      remoteName.sin_family = AF_INET;
-      remoteName.sin_port = htons(destPortNum);
-      remoteName.sin_addr.s_addr = fServerAddress
-	= *(unsigned*)(destAddress.data());
+      fServerAddress = *(unsigned*)(destAddress.data());
+      MAKE_SOCKADDR_IN(remoteName, fServerAddress, htons(destPortNum));
       if (connect(fInputSocketNum, (struct sockaddr*)&remoteName, sizeof remoteName)
 	  != 0) {
 	envir().setResultErrMsg("connect() failed: ");
 	break;
       }
       
-      if (fTunnelOverHTTPPortNum != 0 && !setupHTTPTunneling(urlSuffix)) break;
+      if (fTunnelOverHTTPPortNum != 0 && !setupHTTPTunneling(urlSuffix, authenticator)) break;
     }
 
     return True; 
@@ -2221,7 +2266,8 @@ Boolean RTSPClient::parseGetParameterHeader(char const* line,
   return False;
 }
 
-Boolean RTSPClient::setupHTTPTunneling(char const* urlSuffix) {
+Boolean RTSPClient::setupHTTPTunneling(char const* urlSuffix,
+				       Authenticator* authenticator) {
   if (fVerbosityLevel >= 1) {
     envir() << "Requesting RTSP-over-HTTP tunneling (on port "
 	    << fTunnelOverHTTPPortNum << ")\n\n";
@@ -2243,9 +2289,14 @@ Boolean RTSPClient::setupHTTPTunneling(char const* urlSuffix) {
     // DSS seems to require that the 'session cookie' string be 22 bytes long:
     sessionCookie[23] = '\0';
     
+    // Construct an authenticator string:
+    char* authenticatorStr
+      = createAuthenticatorString(authenticator, "GET", urlSuffix);
+
     // Begin by sending a HTTP "GET", to set up the server->client link:
     char* const getCmdFmt =
       "GET %s HTTP/1.0\r\n"
+      "%s"
       "%s"
       "x-sessioncookie: %s\r\n"
       "Accept: application/x-rtsp-tunnelled\r\n"
@@ -2254,19 +2305,28 @@ Boolean RTSPClient::setupHTTPTunneling(char const* urlSuffix) {
       "\r\n";
     unsigned cmdSize = strlen(getCmdFmt)
       + strlen(urlSuffix)
+      + strlen(authenticatorStr)
       + fUserAgentHeaderStrSize
       + strlen(sessionCookie);
     cmd = new char[cmdSize];
     sprintf(cmd, getCmdFmt,
 	    urlSuffix,
+	    authenticatorStr,
 	    fUserAgentHeaderStr,
 	    sessionCookie);
+    delete[] authenticatorStr;
     if (!sendRequest(cmd, "HTTP GET", False/*don't base64-encode*/)) break;
     
     // Get the response from the server:
     unsigned bytesRead; unsigned responseCode;
     char* firstLine; char* nextLineStart;
-    if (!getResponse("HTTP GET", bytesRead, responseCode, firstLine, nextLineStart)) break;
+    if (!getResponse("HTTP GET", bytesRead, responseCode, firstLine, nextLineStart,
+		     False /*don't check for response code 200*/)) break;
+    if (responseCode != 200) {
+      checkForAuthenticationFailure(responseCode, nextLineStart, authenticator);
+      envir().setResultMsg("cannot handle HTTP GET response: ", firstLine);
+      break;
+    }
 
     // Next, set up a second TCP connection (to the same server & port as before)
     // for the HTTP-tunneled client->server link.  All future output will be to
@@ -2275,10 +2335,7 @@ Boolean RTSPClient::setupHTTPTunneling(char const* urlSuffix) {
     if (fOutputSocketNum < 0) break;
     
     // Connect to the remote endpoint:
-    struct sockaddr_in remoteName;
-    remoteName.sin_family = AF_INET;
-    remoteName.sin_port = htons(fTunnelOverHTTPPortNum);
-    remoteName.sin_addr.s_addr = fServerAddress;
+    MAKE_SOCKADDR_IN(remoteName, fServerAddress, htons(fTunnelOverHTTPPortNum));
     if (connect(fOutputSocketNum,
 		(struct sockaddr*)&remoteName, sizeof remoteName) != 0) {
       envir().setResultErrMsg("connect() failed: ");
@@ -2286,8 +2343,10 @@ Boolean RTSPClient::setupHTTPTunneling(char const* urlSuffix) {
     }
 
     // Then, send a HTTP "POST", to set up the client->server link:
+    authenticatorStr = createAuthenticatorString(authenticator, "POST", urlSuffix);
     char* const postCmdFmt =
       "POST %s HTTP/1.0\r\n"
+      "%s"
       "%s"
       "x-sessioncookie: %s\r\n"
       "Content-Type: application/x-rtsp-tunnelled\r\n"
@@ -2298,13 +2357,16 @@ Boolean RTSPClient::setupHTTPTunneling(char const* urlSuffix) {
       "\r\n";
     cmdSize = strlen(postCmdFmt)
       + strlen(urlSuffix)
+      + strlen(authenticatorStr)
       + fUserAgentHeaderStrSize
       + strlen(sessionCookie);
     delete[] cmd; cmd = new char[cmdSize];
     sprintf(cmd, postCmdFmt,
 	    urlSuffix,
+	    authenticatorStr,
 	    fUserAgentHeaderStr,
 	    sessionCookie);
+    delete[] authenticatorStr;
     if (!sendRequest(cmd, "HTTP POST", False/*don't base64-encode*/)) break;
     
     // Note that there's no response to the "POST".

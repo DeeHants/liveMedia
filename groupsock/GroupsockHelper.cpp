@@ -93,10 +93,7 @@ int setupDatagramSocket(UsageEnvironment& env, Port port,
 #else
   if (port.num() != 0 || ReceivingInterfaceAddr != INADDR_ANY) {
 #endif
-    struct sockaddr_in name;
-    name.sin_family = AF_INET;
-    name.sin_port = port.num();
-    name.sin_addr.s_addr = ReceivingInterfaceAddr;
+    MAKE_SOCKADDR_IN(name, ReceivingInterfaceAddr, port.num());
     if (bind(newSocket, (struct sockaddr*)&name, sizeof name) != 0) {
       char tmpBuffer[100];
       sprintf(tmpBuffer, "bind() error (port number: %d): ",
@@ -170,10 +167,7 @@ int setupStreamSocket(UsageEnvironment& env,
 #else
   if (port.num() != 0 || ReceivingInterfaceAddr != INADDR_ANY) {
 #endif
-    struct sockaddr_in name;
-    name.sin_family = AF_INET;
-    name.sin_port = port.num();
-    name.sin_addr.s_addr = ReceivingInterfaceAddr;
+    MAKE_SOCKADDR_IN(name, ReceivingInterfaceAddr, port.num());
     if (bind(newSocket, (struct sockaddr*)&name, sizeof name) != 0) {
       char tmpBuffer[100];
       sprintf(tmpBuffer, "bind() error (port number: %d): ",
@@ -225,6 +219,10 @@ static int blockUntilReadable(UsageEnvironment& env,
     if (timeout != NULL && result == 0) {
       break; // this is OK - timeout occurred
     } else if (result <= 0) {
+#if defined(__WIN32__) || defined(_WIN32)
+#else
+      if (errno == EINTR || errno == EAGAIN) continue;
+#endif
       socketErr(env, "select() error: ");
       break;
     }
@@ -332,11 +330,7 @@ Boolean writeSocket(UsageEnvironment& env,
 			}
 		}
 
-		struct sockaddr_in dest;
-    		dest.sin_family = AF_INET;
-		dest.sin_port = port.num();
-		dest.sin_addr = address;
-
+		MAKE_SOCKADDR_IN(dest, address.s_addr, port.num());
 		int bytesSent = sendto(socket, (char*)buffer, bufferSize, 0,
 			               (struct sockaddr*)&dest, sizeof dest);
 		if (bytesSent != (int)bufferSize) {
@@ -523,10 +517,7 @@ Boolean getSourcePort(UsageEnvironment& env, int socket, Port& port) {
   portNumBits portNum = 0;
   if (!getSourcePort0(socket, portNum) || portNum == 0) {
     // Hack - call bind(), then try again:
-    struct sockaddr_in name;
-    name.sin_family = AF_INET;
-    name.sin_port = 0;
-    name.sin_addr.s_addr = INADDR_ANY;
+    MAKE_SOCKADDR_IN(name, INADDR_ANY, 0);
     bind(socket, (struct sockaddr*)&name, sizeof name);
 
     if (!getSourcePort0(socket, portNum) || portNum == 0) {
@@ -557,6 +548,7 @@ netAddressBits ourSourceAddressForMulticast(UsageEnvironment& env) {
   if (ourAddress == 0) {
     // We need to find our source address
     struct sockaddr_in fromAddr;
+    fromAddr.sin_addr.s_addr = 0;
     
     // Get our address by sending a (0-TTL) multicast packet,
     // receiving it, and looking at the source address used.

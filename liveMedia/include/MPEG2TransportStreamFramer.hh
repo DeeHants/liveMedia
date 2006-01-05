@@ -39,7 +39,7 @@ private:
   void afterGettingFrame1(unsigned frameSize,
 			  struct timeval presentationTime);
 
-  void updateTSPacketDurationEstimate(unsigned char* pkt);
+  void updateTSPacketDurationEstimate(unsigned char* pkt, double timeNow);
 
 private:
   unsigned long fTSPacketCount;
