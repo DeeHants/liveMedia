@@ -195,6 +195,11 @@ private:
 			      char const*& suffix);
   Boolean setupHTTPTunneling(char const* urlSuffix, Authenticator* authenticator);
 
+  // Support for handling requests sent back by a server:
+  static void incomingRequestHandler(void*, int /*mask*/);
+  void incomingRequestHandler1();
+  void handleCmd_notSupported(char const* cseq);
+
 private:
   int fVerbosityLevel;
   portNumBits fTunnelOverHTTPPortNum;
