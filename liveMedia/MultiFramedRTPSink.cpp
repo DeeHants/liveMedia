@@ -31,6 +31,7 @@ void MultiFramedRTPSink::setPacketSizes(unsigned preferredPacketSize,
 
   delete fOutBuf;
   fOutBuf = new OutPacketBuffer(preferredPacketSize, maxPacketSize);
+  fOurMaxPacketSize = maxPacketSize; // save value, in case subclasses need it 
 }
 
 MultiFramedRTPSink::MultiFramedRTPSink(UsageEnvironment& env,
@@ -356,6 +357,7 @@ void MultiFramedRTPSink::sendPacketIfNecessary() {
     fOutBuf->resetPacketStart();
   }
   fOutBuf->resetOffset();
+  fNumFramesUsedSoFar = 0;
 
   if (fNoFramesLeft) {
     // We're done:

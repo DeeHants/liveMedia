@@ -812,10 +812,6 @@ Boolean MediaSubsession::initiate(int useSpecialRTPoffset) {
 						 fRTPTimestampFrequency,
 						 mimeType);
 	delete[] mimeType;
-      } else if (strcmp(fCodecName, "X-MCT-TEXT") == 0) {
-	// A UDP-packetized text stream (*not* a RTP stream)
-	fReadSource = BasicUDPSource::createNew(env(), fRTPSocket);
-	fRTPSource = NULL; // Note!
 #ifdef SUPPORT_REAL_RTSP
       } else if (strcmp(fCodecName, "X-PN-REALAUDIO") == 0 ||
 		 strcmp(fCodecName, "X-PN-MULTIRATE-REALAUDIO-LIVE") == 0 ||
@@ -1083,7 +1079,8 @@ Boolean MediaSubsession::parseSDPAttribute_fmtp(char const* sdpLine) {
 	fObjecttype = u;
       } else if (sscanf(line, " octet-align = %u", &u) == 1) {
 	fOctetalign = u;
-      } else if (sscanf(line, " profile-level-id = %u", &u) == 1) {
+      } else if (sscanf(line, " profile-level-id = %x", &u) == 1) {
+	// Note that the "profile-level-id" parameter is assumed to be hexadecimal
 	fProfile_level_id = u;
       } else if (sscanf(line, " robust-sorting = %u", &u) == 1) {
 	fRobustsorting = u;

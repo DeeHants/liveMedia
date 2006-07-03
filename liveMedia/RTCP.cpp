@@ -131,7 +131,8 @@ RTCPInstance::RTCPInstance(UsageEnvironment& env, Groupsock* RTCPgs,
     fHaveJustSentPacket(False), fLastPacketSentSize(0),
     fByeHandlerTask(NULL), fByeHandlerClientData(NULL),
     fSRHandlerTask(NULL), fSRHandlerClientData(NULL),
-    fRRHandlerTask(NULL), fRRHandlerClientData(NULL) {
+    fRRHandlerTask(NULL), fRRHandlerClientData(NULL),
+    fSpecificRRHandlerTable(NULL) {
 #ifdef DEBUG
   fprintf(stderr, "RTCPInstance[%p]::RTCPInstance()\n", this);
 #endif
@@ -161,6 +162,11 @@ RTCPInstance::RTCPInstance(UsageEnvironment& env, Groupsock* RTCPgs,
   onExpire(this);
 }
 
+struct RRHandlerRecord {
+  TaskFunc* rrHandlerTask;
+  void* rrHandlerClientData;
+};
+
 RTCPInstance::~RTCPInstance() {
 #ifdef DEBUG
   fprintf(stderr, "RTCPInstance[%p]::~RTCPInstance()\n", this);
@@ -172,6 +178,15 @@ RTCPInstance::~RTCPInstance() {
   // 'reconsideration', because "this" is going away.
   fTypeOfEvent = EVENT_BYE; // not used, but...
   sendBYE();
+
+  if (fSpecificRRHandlerTable != NULL) {
+    AddressPortLookupTable::Iterator iter(*fSpecificRRHandlerTable);
+    RRHandlerRecord* rrHandler;
+    while ((rrHandler = (RRHandlerRecord*)iter.next()) != NULL) {
+      delete rrHandler;
+    }
+    delete fSpecificRRHandlerTable;
+  }
 
   delete fKnownMembers;
   delete fOutBuf;
@@ -229,6 +244,35 @@ void RTCPInstance::setSRHandler(TaskFunc* handlerTask, void* clientData) {
 void RTCPInstance::setRRHandler(TaskFunc* handlerTask, void* clientData) {
   fRRHandlerTask = handlerTask;
   fRRHandlerClientData = clientData;
+}
+
+void RTCPInstance
+::setSpecificRRHandler(netAddressBits fromAddress, Port fromPort,
+		       TaskFunc* handlerTask, void* clientData) {
+  if (handlerTask == NULL && clientData == NULL) {
+    unsetSpecificRRHandler(fromAddress, fromPort);
+    return;
+  }
+
+  RRHandlerRecord* rrHandler = new RRHandlerRecord;
+  rrHandler->rrHandlerTask = handlerTask;
+  rrHandler->rrHandlerClientData = clientData;
+  if (fSpecificRRHandlerTable == NULL) {
+    fSpecificRRHandlerTable = new AddressPortLookupTable;
+  }
+  fSpecificRRHandlerTable->Add(fromAddress, (~0), fromPort, rrHandler);
+}
+
+void RTCPInstance
+::unsetSpecificRRHandler(netAddressBits fromAddress, Port fromPort) {
+  if (fSpecificRRHandlerTable == NULL) return;
+
+  RRHandlerRecord* rrHandler
+    = (RRHandlerRecord*)(fSpecificRRHandlerTable->Lookup(fromAddress, (~0), fromPort));
+  if (rrHandler != NULL) {
+    fSpecificRRHandlerTable->Remove(fromAddress, (~0), fromPort);
+    delete rrHandler;
+  }
 }
 
 void RTCPInstance::setStreamSocket(int sockNum,
@@ -402,6 +446,21 @@ void RTCPInstance::incomingReportHandler1() {
 
 	  if (pt == RTCP_PT_RR) { // i.e., we didn't fall through from 'SR'
 	    // If a 'RR handler' was set, call it now:
+
+	    // Specific RR handler:
+	    if (fSpecificRRHandlerTable != NULL) {
+	      netAddressBits fromAddr = fromAddress.sin_addr.s_addr;
+	      Port fromPort(ntohs(fromAddress.sin_port)); 
+	      RRHandlerRecord* rrHandler
+		= (RRHandlerRecord*)(fSpecificRRHandlerTable->Lookup(fromAddr, (~0), fromPort));
+	      if (rrHandler != NULL) {
+		if (rrHandler->rrHandlerTask != NULL) {
+		  (*(rrHandler->rrHandlerTask))(rrHandler->rrHandlerClientData);
+		}
+	      }
+	    }
+
+	    // General RR handler:
 	    if (fRRHandlerTask != NULL) (*fRRHandlerTask)(fRRHandlerClientData);
 	  }
 

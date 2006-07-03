@@ -24,8 +24,7 @@ H263plusVideoRTPSink
 ::H263plusVideoRTPSink(UsageEnvironment& env, Groupsock* RTPgs,
 		       unsigned char rtpPayloadFormat,
 		       u_int32_t rtpTimestampFrequency)
-  : VideoRTPSink(env, RTPgs, rtpPayloadFormat, rtpTimestampFrequency, "H263-1998"),
-    fAreInFragmentedFrame(False) {
+  : VideoRTPSink(env, RTPgs, rtpPayloadFormat, rtpTimestampFrequency, "H263-1998") {
 }
 
 H263plusVideoRTPSink::~H263plusVideoRTPSink() {
@@ -80,8 +79,6 @@ void H263plusVideoRTPSink
     setMarkerBit();
   }
 
-  fAreInFragmentedFrame = (numRemainingBytes > 0); // for next time
-
   // Also set the RTP timestamp:
   setTimestamp(frameTimestamp);
 }
@@ -91,5 +88,5 @@ unsigned H263plusVideoRTPSink::specialHeaderSize() const {
   // There's a 2-byte special video header.  However, if we're the first
   // (or only) fragment of a frame, then we reuse the first 2 bytes of
   // the payload instead.
-  return fAreInFragmentedFrame ? 2 : 0;
+  return (curFragmentationOffset() == 0) ? 0 : 2;
 }

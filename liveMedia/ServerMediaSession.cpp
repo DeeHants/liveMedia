@@ -194,7 +194,7 @@ char* ServerMediaSession::generateSDPDescription() {
   if (fIsSSM) {
     char const* const sourceFilterFmt =
       "a=source-filter: incl IN IP4 * %s\r\n"
-      "a=rtcp:unicast reflection\r\n";
+      "a=rtcp-unicast: reflection\r\n";
     unsigned sourceFilterFmtSize = strlen(sourceFilterFmt)
       + ourIPAddressStrSize;
 

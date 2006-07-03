@@ -13,33 +13,22 @@ You should have received a copy of the GNU Lesser General Public License
 along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
-// Copyright (c) 1996-2000 Live Networks, Inc.  All rights reserved.
-// Usage Environment
+// "liveMedia"
+// Copyright (c) 1996-2005 Live Networks, Inc.  All rights reserved.
+// Any source that feeds into a "H264VideoRTPSink" must be of this class.
+// This is a virtual base class; subclasses must implement the
+// "currentNALUnitEndsAccessUnit()" virtual function.
 // Implementation
 
-#include "UsageEnvironment.hh"
+#include "H264VideoStreamFramer.hh"
 
-void UsageEnvironment::reclaim() {
-  // We delete ourselves only if we have no remainining state:
-  if (liveMediaPriv == NULL && groupsockPriv == NULL) delete this;
+H264VideoStreamFramer::H264VideoStreamFramer(UsageEnvironment& env)
+  : FramedSource(env) {
 }
 
-UsageEnvironment::UsageEnvironment(TaskScheduler& scheduler)
-  : liveMediaPriv(NULL), groupsockPriv(NULL), fScheduler(scheduler) {
+H264VideoStreamFramer::~H264VideoStreamFramer() {
 }
 
-UsageEnvironment::~UsageEnvironment() {
-}
-
-TaskScheduler::TaskScheduler() {
-}
-
-TaskScheduler::~TaskScheduler() {
-}
- 
-void TaskScheduler::rescheduleDelayedTask(TaskToken& task,
-					  int64_t microseconds, TaskFunc* proc,
-					  void* clientData) {
-  unscheduleDelayedTask(task);
-  task = scheduleDelayedTask(microseconds, proc, clientData);
+Boolean H264VideoStreamFramer::isH264VideoStreamFramer() const {
+  return True;
 }
