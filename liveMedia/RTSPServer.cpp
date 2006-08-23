@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2005 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2006 Live Networks, Inc.  All rights reserved.
 // A RTSP server
 // Implementation
 
@@ -239,6 +239,7 @@ RTSPServer::RTSPClientSession
     fIsMulticast(False), fSessionIsActive(True), fStreamAfterSETUP(False),
     fTCPStreamIdCount(0), fNumStreamStates(0), fStreamStates(NULL) {
   // Arrange to handle incoming requests:
+  resetRequestBuffer();
   envir().taskScheduler().turnOnBackgroundReadHandling(fClientSocket,
      (TaskScheduler::BackgroundHandlerProc*)&incomingRequestHandler, this);
   noteLiveness();
@@ -275,6 +276,12 @@ void RTSPServer::RTSPClientSession::reclaimStreamStates() {
   fNumStreamStates = 0;
 }
 
+void RTSPServer::RTSPClientSession::resetRequestBuffer() {
+  fRequestBytesAlreadySeen = 0;
+  fRequestBufferBytesLeft = sizeof fRequestBuffer;
+  fLastCRLF = &fRequestBuffer[-3]; // hack
+}
+
 void RTSPServer::RTSPClientSession
 ::incomingRequestHandler(void* instance, int /*mask*/) {
   RTSPClientSession* session = (RTSPClientSession*)instance;
@@ -285,58 +292,53 @@ void RTSPServer::RTSPClientSession::incomingRequestHandler1() {
   noteLiveness();
 
   struct sockaddr_in dummy; // 'from' address, meaningless in this case
-  int bytesLeft = sizeof fBuffer;
-  int totalBytes = 0;
   Boolean endOfMsg = False;
-  unsigned char* ptr = fBuffer;
-  unsigned char* lastCRLF = ptr-3;
+  unsigned char* ptr = &fRequestBuffer[fRequestBytesAlreadySeen];
   
-  while (!endOfMsg) {
-    if (bytesLeft <= 0) {
-      // command too big
-      delete this;
-      return;
-    }
-    
-    int bytesRead = readSocket(envir(), fClientSocket,
-			       ptr, bytesLeft, dummy);
-    if (bytesRead <= 0) {
-      // The client socket has apparently died - kill it:
-      delete this;
-      return;
-    }
+  int bytesRead = readSocket(envir(), fClientSocket,
+			     ptr, fRequestBufferBytesLeft, dummy);
+  if (bytesRead <= 0 || (unsigned)bytesRead >= fRequestBufferBytesLeft) {
+    // Either the client socket has died, or the request was too big for us.
+    // Terminate this connection:
 #ifdef DEBUG
-    ptr[bytesRead] = '\0';
-    fprintf(stderr, "RTSPClientSession[%p]::incomingRequestHandler1() read %d bytes:%s\n", this, bytesRead, ptr);
+    fprintf(stderr, "RTSPClientSession[%p]::incomingRequestHandler1() read %d bytes (of %d); terminating connection!\n", this, bytesRead, fRequestBufferBytesLeft);
+#endif
+    delete this;
+    return;
+  }
+#ifdef DEBUG
+  ptr[bytesRead] = '\0';
+  fprintf(stderr, "RTSPClientSession[%p]::incomingRequestHandler1() read %d bytes:%s\n", this, bytesRead, ptr);
 #endif
 
-    // Look for the end of the message: <CR><LF><CR><LF>
-    unsigned char *tmpPtr = ptr;
-    if (totalBytes > 0) --tmpPtr; // In case the last read ended with a <CR>
-    while (tmpPtr < &ptr[bytesRead-1]) {
-      if (*tmpPtr == '\r' && *(tmpPtr+1) == '\n') {
-	if (tmpPtr - lastCRLF == 2) { // This is it:
-	  endOfMsg = 1;
-	  break;
-	}
-	lastCRLF = tmpPtr;
+  // Look for the end of the message: <CR><LF><CR><LF>
+  unsigned char *tmpPtr = ptr;
+  if (fRequestBytesAlreadySeen > 0) --tmpPtr;
+      // in case the last read ended with a <CR>
+  while (tmpPtr < &ptr[bytesRead-1]) {
+    if (*tmpPtr == '\r' && *(tmpPtr+1) == '\n') {
+      if (tmpPtr - fLastCRLF == 2) { // This is it:
+	endOfMsg = 1;
+	break;
       }
-      ++tmpPtr;
+      fLastCRLF = tmpPtr;
     }
-  
-    bytesLeft -= bytesRead;
-    totalBytes += bytesRead;
-    ptr += bytesRead;
+    ++tmpPtr;
   }
-  fBuffer[totalBytes] = '\0';
+  
+  fRequestBufferBytesLeft -= bytesRead;
+  fRequestBytesAlreadySeen += bytesRead;
+
+  if (!endOfMsg) return; // subsequent reads will be needed to complete the request
 
   // Parse the request string into command name and 'CSeq',
   // then handle the command:
+  fRequestBuffer[fRequestBytesAlreadySeen] = '\0';
   char cmdName[RTSP_PARAM_STRING_MAX];
   char urlPreSuffix[RTSP_PARAM_STRING_MAX];
   char urlSuffix[RTSP_PARAM_STRING_MAX];
   char cseq[RTSP_PARAM_STRING_MAX];
-  if (!parseRTSPRequestString((char*)fBuffer, totalBytes,
+  if (!parseRTSPRequestString((char*)fRequestBuffer, fRequestBytesAlreadySeen,
 			      cmdName, sizeof cmdName,
 			      urlPreSuffix, sizeof urlPreSuffix,
 			      urlSuffix, sizeof urlSuffix,
@@ -352,15 +354,15 @@ void RTSPServer::RTSPClientSession::incomingRequestHandler1() {
     if (strcmp(cmdName, "OPTIONS") == 0) {
       handleCmd_OPTIONS(cseq);
     } else if (strcmp(cmdName, "DESCRIBE") == 0) {
-      handleCmd_DESCRIBE(cseq, urlSuffix, (char const*)fBuffer);
+      handleCmd_DESCRIBE(cseq, urlSuffix, (char const*)fRequestBuffer);
     } else if (strcmp(cmdName, "SETUP") == 0) {
-      handleCmd_SETUP(cseq, urlPreSuffix, urlSuffix, (char const*)fBuffer);
+      handleCmd_SETUP(cseq, urlPreSuffix, urlSuffix, (char const*)fRequestBuffer);
     } else if (strcmp(cmdName, "TEARDOWN") == 0
 	       || strcmp(cmdName, "PLAY") == 0
 	       || strcmp(cmdName, "PAUSE") == 0
 	       || strcmp(cmdName, "GET_PARAMETER") == 0) {
       handleCmd_withinSession(cmdName, urlPreSuffix, urlSuffix, cseq,
-			      (char const*)fBuffer);
+			      (char const*)fRequestBuffer);
     } else {
       handleCmd_notSupported(cseq);
     }
@@ -375,8 +377,10 @@ void RTSPServer::RTSPClientSession::incomingRequestHandler1() {
     // The client has asked for streaming to commence now, rather than after a
     // subsequent "PLAY" command.  So, simulate the effect of a "PLAY" command:
     handleCmd_withinSession("PLAY", urlPreSuffix, urlSuffix, cseq,
-			    (char const*)fBuffer);
+			    (char const*)fRequestBuffer);
   }
+
+  resetRequestBuffer(); // to prepare for any subsequent request
   if (!fSessionIsActive) delete this;
 }
 
@@ -600,6 +604,17 @@ static Boolean parseRangeHeader(char const* buf, float& rangeStart, float& range
   return True;
 }
 
+static Boolean parsePlayNowHeader(char const* buf) {
+  // Find "x-playNow:" header, if present
+  while (1) {
+    if (*buf == '\0') return False; // not found
+    if (_strncasecmp(buf, "x-playNow:", 10) == 0) break;
+    ++buf;
+  }
+
+  return True;
+}
+
 void RTSPServer::RTSPClientSession
 ::handleCmd_SETUP(char const* cseq,
 		  char const* urlPreSuffix, char const* urlSuffix,
@@ -699,7 +714,8 @@ void RTSPServer::RTSPClientSession
   // Next, check whether a "Range:" header is present in the request.
   // This isn't legal, but some clients do this to combine "SETUP" and "PLAY":
   float rangeStart, rangeEnd;
-  fStreamAfterSETUP = parseRangeHeader(fullRequestStr, rangeStart, rangeEnd);
+  fStreamAfterSETUP = parseRangeHeader(fullRequestStr, rangeStart, rangeEnd) ||
+                      parsePlayNowHeader(fullRequestStr);
 
   // Then, get server parameters from the 'subsession':
   int tcpSocketNum = streamingMode == RTP_TCP ? fClientSocket : -1;
