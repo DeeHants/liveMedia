@@ -51,6 +51,7 @@ H264VideoRTPSink
 H264VideoRTPSink::~H264VideoRTPSink() {
   delete[] fFmtpSDPLine;
   delete fOurFragmenter;
+  fSource = NULL;
 }
 
 H264VideoRTPSink*
