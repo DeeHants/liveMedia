@@ -63,6 +63,9 @@ private:
   static void handleInputClosure(void* clientData);
   void handleInputClosure1();
 
+  void analyzePAT(unsigned char* pkt, unsigned size);
+  void analyzePMT(unsigned char* pkt, unsigned size);
+
   Boolean deliverIndexRecord();
   Boolean parseFrame();
   Boolean parseToNextCode(unsigned char& nextCode);
@@ -75,6 +78,8 @@ private:
   u_int8_t fLastContinuityCounter;
   float fFirstPCR, fLastPCR;
   Boolean fHaveSeenFirstPCR;
+  u_int16_t fPMT_PID, fVideo_PID;
+      // Note: We assume: 1 program per Transport Stream; 1 video stream per program
   unsigned char fInputBuffer[TRANSPORT_PACKET_SIZE];
   unsigned char* fParseBuffer;
   unsigned fParseBufferSize;

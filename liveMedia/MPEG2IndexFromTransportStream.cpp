@@ -38,7 +38,7 @@ public:
   virtual ~IndexRecord();
   
   RecordType& recordType() { return fRecordType; }
-  void setFirstFlag() { *(u_int8_t*)&fRecordType |= 0x80; }
+  void setFirstFlag() { fRecordType = (RecordType)(((u_int8_t)fRecordType) | 0x80); }
   u_int8_t startOffset() const { return fStartOffset; }
   u_int8_t& size() { return fSize; }
   float pcr() const { return fPCR; }
@@ -94,6 +94,9 @@ MPEG2IFrameIndexFromTransportStream::createNew(UsageEnvironment& env,
 // complete frame will fit inside it:
 #define PARSE_BUFFER_SIZE (2*MAX_FRAME_SIZE)
 
+// The PID used for the PAT (as defined in the MPEG Transport Stream standard):
+#define PAT_PID 0
+
 MPEG2IFrameIndexFromTransportStream
 ::MPEG2IFrameIndexFromTransportStream(UsageEnvironment& env,
 				      FramedSource* inputSource)
@@ -101,6 +104,7 @@ MPEG2IFrameIndexFromTransportStream
     fInputTransportPacketCounter((unsigned)-1), fClosureNumber(0),
     fLastContinuityCounter(~0),
     fFirstPCR(0.0), fLastPCR(0.0), fHaveSeenFirstPCR(False),
+    fPMT_PID(0x10), fVideo_PID(0xE0), // default values
     fParseBufferSize(PARSE_BUFFER_SIZE),
     fParseBufferFrameStart(0), fParseBufferParseEnd(4), fParseBufferDataEnd(0),
     fHeadIndexRecord(NULL), fTailIndexRecord(NULL) {
@@ -191,12 +195,18 @@ void MPEG2IFrameIndexFromTransportStream
     fLastPCR = pcr;
   }
   
-  // Ignore transport packets for non-video programs,
-  //     (Later, look at the Program Stream Maps also) #####
-  // or packets with no data, or packets that duplicate the previous packet:
+  // Get the PID from the packet, and check for special tables: the PAT and PMT:
   u_int16_t PID = ((fInputBuffer[1]&0x1F)<<8) | fInputBuffer[2];
+  if (PID == PAT_PID) {
+    analyzePAT(&fInputBuffer[totalHeaderSize], TRANSPORT_PACKET_SIZE-totalHeaderSize);
+  } else if (PID == fPMT_PID) {
+    analyzePMT(&fInputBuffer[totalHeaderSize], TRANSPORT_PACKET_SIZE-totalHeaderSize);
+  }
+
+  // Ignore transport packets for non-video programs,
+  // or packets with no data, or packets that duplicate the previous packet:
   u_int8_t continuity_counter = fInputBuffer[3]&0x0F;
-  if ((PID != 0xE0 && PID != 0x111) ||
+  if ((PID != fVideo_PID) ||
       !(adaptation_field_control == 1  || adaptation_field_control == 3) ||
       continuity_counter == fLastContinuityCounter) {
     doGetNextFrame();
@@ -206,11 +216,11 @@ void MPEG2IFrameIndexFromTransportStream
   
   // Also, if this is the start of a PES packet, then skip over the PES header:
   Boolean payload_unit_start_indicator = (fInputBuffer[1]&0x40) != 0;
-  //fprintf(stderr, "PUSI: %d\n", payload_unit_start_indicator);//#####@@@@@
+  //fprintf(stderr, "PUSI: %d\n", payload_unit_start_indicator);//#####
   if (payload_unit_start_indicator) {
     // Note: The following works only for MPEG-2 data #####
     u_int8_t PES_header_data_length = fInputBuffer[totalHeaderSize+8];
-    //fprintf(stderr, "PES_header_data_length: %d\n", PES_header_data_length);//#####@@@@@
+    //fprintf(stderr, "PES_header_data_length: %d\n", PES_header_data_length);//#####
     totalHeaderSize += 9 + PES_header_data_length;
     if (totalHeaderSize >= TRANSPORT_PACKET_SIZE) {
       envir() << "Unexpectedly large PES header size: " << PES_header_data_length << "\n";
@@ -262,6 +272,48 @@ void MPEG2IFrameIndexFromTransportStream::handleInputClosure1() {
   } else {
     // Handle closure in the regular way:
     FramedSource::handleClosure(this);
+  }
+}
+
+void MPEG2IFrameIndexFromTransportStream
+::analyzePAT(unsigned char* pkt, unsigned size) {
+  // Get the PMT_PID (we assume that's there just 1 program):
+  if (size < 16) return; // table too small 
+  u_int16_t program_number = (pkt[9]<<8) | pkt[10];
+  if (program_number != 0) {
+    fPMT_PID = ((pkt[11]&0x1F)<<8) | pkt[12];
+  }
+}
+
+void MPEG2IFrameIndexFromTransportStream
+::analyzePMT(unsigned char* pkt, unsigned size) {
+  // Scan the "elementary_PID"s in the map, until we see the first video stream.
+
+  // First, get the "section_length", to get the table's size:
+  u_int16_t section_length = ((pkt[2]&0x0F)<<8) | pkt[3];
+  if ((unsigned)(4+section_length) < size) size = (4+section_length);
+
+  // Then, skip any descriptors following the "program_info_length":
+  if (size < 22) return; // not enough data
+  unsigned program_info_length = ((pkt[11]&0x0F)<<8) | pkt[12];
+  pkt += 13; size -= 13;
+  if (size < program_info_length) return; // not enough data
+  pkt += program_info_length; size -= program_info_length;
+
+  // Look at each ("stream_type","elementary_PID") pair, looking for a video stream
+  // ("stream_type" == 1 or 2):
+  while (size >= 9) {
+    u_int8_t stream_type = pkt[0];
+    u_int16_t elementary_PID = ((pkt[1]&0x1F)<<8) | pkt[2];
+    if (stream_type == 1 || stream_type == 2) {
+      fVideo_PID = elementary_PID;
+      return;
+    }
+
+    u_int16_t ES_info_length = ((pkt[3]&0x0F)<<8) | pkt[4];
+    pkt += 5; size -= 5;
+    if (size < ES_info_length) return; // not enough data
+    pkt += ES_info_length; size -= ES_info_length;
   }
 }
 
@@ -343,7 +395,7 @@ Boolean MPEG2IFrameIndexFromTransportStream::parseFrame() {
     if (!parseToNextCode(nextCode)) return False;
     
     numInitialBadBytes = fParseBufferParseEnd - fParseBufferFrameStart;
-    //fprintf(stderr, "#####@@@@@numInitialBadBytes: 0x%x\n", numInitialBadBytes);
+    //fprintf(stderr, "#####numInitialBadBytes: 0x%x\n", numInitialBadBytes);
     fParseBufferFrameStart = fParseBufferParseEnd;
     fParseBufferParseEnd += 4; // skip over the code that we just saw
     p = &fParseBuffer[fParseBufferFrameStart];
@@ -389,13 +441,13 @@ Boolean MPEG2IFrameIndexFromTransportStream::parseFrame() {
   
   if (curRecordType == RECORD_PIC_NON_IFRAME) {
     if (curCode == VOP_START_CODE) { // MPEG-4
-      //fprintf(stderr, "#####@@@@@parseFrame()1(4): 0x%x, 0x%x\n", curCode, fParseBuffer[fParseBufferFrameStart+4]&0xC0);
+      //fprintf(stderr, "#####parseFrame()1(4): 0x%x, 0x%x\n", curCode, fParseBuffer[fParseBufferFrameStart+4]&0xC0);
       if ((fParseBuffer[fParseBufferFrameStart+4]&0xC0) == 0) {
 	// This is actually an I-frame.  Note it as such:
 	curRecordType = RECORD_PIC_IFRAME;
       }
     } else { // MPEG-1 or 2
-      //fprintf(stderr, "#####@@@@@parseFrame()1(!4): 0x%x, 0x%x\n", curCode, fParseBuffer[fParseBufferFrameStart+5]&0x38);
+      //fprintf(stderr, "#####parseFrame()1(!4): 0x%x, 0x%x\n", curCode, fParseBuffer[fParseBufferFrameStart+5]&0x38);
       if ((fParseBuffer[fParseBufferFrameStart+5]&0x38) == 0x08) {
 	// This is actually an I-frame.  Note it as such:
 	curRecordType = RECORD_PIC_IFRAME;
