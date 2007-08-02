@@ -87,7 +87,7 @@ sms = ServerMediaSession::createNew(env, fileName, fileName, descStr);\
 static ServerMediaSession* createNewSMS(UsageEnvironment& env,
 					char const* fileName, FILE* /*fid*/) {
   // Use the file name extension to determine the type of "ServerMediaSession":
-  char* extension = strrchr(fileName, '.');
+  char const* extension = strrchr(fileName, '.');
   if (extension == NULL) return NULL;
 
   ServerMediaSession* sms = NULL;
@@ -140,6 +140,7 @@ static ServerMediaSession* createNewSMS(UsageEnvironment& env,
     sprintf(indexFileName, "%sx", fileName);
     NEW_SMS("MPEG Transport Stream");
     sms->addSubsession(MPEG2TransportFileServerMediaSubsession::createNew(env, fileName, indexFileName, reuseSource));
+    delete[] indexFileName;
   } else if (strcmp(extension, ".wav") == 0) {
     // Assumed to be a WAV Audio file:
     NEW_SMS("WAV Audio Stream");

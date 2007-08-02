@@ -21,47 +21,12 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include "RTSPClient.hh"
 #include "RTSPCommon.hh"
 #include "Base64.hh"
+#include "Locale.hh"
 #include <GroupsockHelper.hh>
 #include "our_md5.h"
 #ifdef SUPPORT_REAL_RTSP
 #include "../RealRTSP/include/RealRTSP.hh"
 #endif
-
-// Experimental support for temporarily setting the locale (e.g., to POSIX,
-// for parsing or printing floating-point numbers in protocol headers).
-#ifdef USE_LOCALE
-#include <locale.h>
-#else
-#ifndef LC_NUMERIC
-#define LC_NUMERIC 0
-#endif
-#endif
-
-class Locale {
-public:
-  Locale(char const* newLocale, int category = LC_NUMERIC)
-    : fCategory(category) {
-#ifdef USE_LOCALE
-    fPrevLocale = strDup(setlocale(category, NULL));
-    setlocale(category, newLocale);
-#endif
-  }
-
-  virtual ~Locale() {
-#ifdef USE_LOCALE
-    if (fPrevLocale != NULL) {
-      setlocale(fCategory, fPrevLocale);
-      delete[] fPrevLocale;
-    }
-#endif
-  }
-
-private:
-  int fCategory;
-  char* fPrevLocale;
-};
-
-
 
 ////////// RTSPClient //////////
 
@@ -275,7 +240,6 @@ char* RTSPClient::describeURL(char const* url, Authenticator* authenticator,
     // that we recognize.
     // (We should also check for "Content-type: application/sdp",
     // "Content-location", "CSeq", etc.) #####
-    char* contentBase = new char[fResponseBufferSize]; // ensures enough space
     char* serverType = new char[fResponseBufferSize]; // ensures enough space
     int contentLength = -1;
     char* lineStart;
@@ -293,9 +257,12 @@ char* RTSPClient::describeURL(char const* url, Authenticator* authenticator,
 			       lineStart, "\"");
 	  break;
 	}
-      } else if (sscanf(lineStart, "Content-Base: %s", contentBase) == 1) {
-	if (contentBase[0] != '\0'/*sanity check*/) {
-	  delete[] fBaseURL; fBaseURL = strDup(contentBase);
+      } else if (strncmp(lineStart, "Content-Base:", 13) == 0) {
+	int cbIndex = 13;
+
+	while (lineStart[cbIndex] == ' ' || lineStart[cbIndex] == '\t') ++cbIndex; 
+	if (lineStart[cbIndex] != '\0'/*sanity check*/) {
+	  delete[] fBaseURL; fBaseURL = strDup(&lineStart[cbIndex]);
 	}
       } else if (sscanf(lineStart, "Server: %s", serverType) == 1) {
 	if (strncmp(serverType, "Kasenna", 7) == 0) fServerIsKasenna = True;
@@ -319,7 +286,6 @@ char* RTSPClient::describeURL(char const* url, Authenticator* authenticator,
       }
     } 
     delete[] serverType;
-    delete[] contentBase;
 
     // We're now at the end of the response header lines
     if (wantRedirection) {
@@ -1024,7 +990,7 @@ static char* createScaleString(float scale, float currentScale) {
     // This is the default value; we don't need a "Scale:" header:
     buf[0] = '\0';
   } else {
-    Locale("POSIX");
+    Locale("POSIX", LC_NUMERIC);
     sprintf(buf, "Scale: %f\r\n", scale);
   }
 
@@ -1038,11 +1004,11 @@ static char* createRangeString(float start, float end) {
     buf[0] = '\0';
   } else if (end < 0) {
     // There's no end time:
-    Locale("POSIX");
+    Locale("POSIX", LC_NUMERIC);
     sprintf(buf, "Range: npt=%.3f-\r\n", start);
   } else {
     // There's both a start and an end time; include them both in the "Range:" hdr
-    Locale("POSIX");
+    Locale("POSIX", LC_NUMERIC);
     sprintf(buf, "Range: npt=%.3f-%.3f\r\n", start, end);
   }
 
@@ -2281,7 +2247,7 @@ Boolean RTSPClient::parseScaleHeader(char const* line, float& scale) {
   if (_strncasecmp(line, "Scale: ", 7) != 0) return False;
   line += 7;
 
-  Locale("POSIX");
+  Locale("POSIX", LC_NUMERIC);
   return sscanf(line, "%f", &scale) == 1;
 }
 
@@ -2325,6 +2291,8 @@ Boolean RTSPClient::parseGetParameterHeader(char const* line,
 
 Boolean RTSPClient::setupHTTPTunneling(char const* urlSuffix,
 				       Authenticator* authenticator) {
+  // Set up RTSP-over-HTTP tunneling, as described in
+  //     http://developer.apple.com/documentation/QuickTime/QTSS/Concepts/chapter_2_section_14.html
   if (fVerbosityLevel >= 1) {
     envir() << "Requesting RTSP-over-HTTP tunneling (on port "
 	    << fTunnelOverHTTPPortNum << ")\n\n";

@@ -79,12 +79,14 @@ public:
   void removeServerMediaSession(ServerMediaSession* serverMediaSession);
   void removeServerMediaSession(char const* streamName);
 
-  char* rtspURL(ServerMediaSession const* serverMediaSession) const;
+  char* rtspURL(ServerMediaSession const* serverMediaSession, int clientSocket = -1) const;
       // returns a "rtsp://" URL that could be used to access the
       // specified session (which must already have been added to
       // us using "addServerMediaSession()".
       // This string is dynamically allocated; caller should delete[]
-  char* rtspURLPrefix() const;
+      // (If "clientSocket" is non-negative, then it is used (by calling "getsockname()") to determine
+      //  the IP address to be used in the URL.)
+  char* rtspURLPrefix(int clientSocket = -1) const;
       // like "rtspURL()", except that it returns just the common prefix used by
       // each session's "rtsp://" URL.
       // This string is dynamically allocated; caller should delete[]
@@ -98,6 +100,11 @@ protected:
   virtual ~RTSPServer();
 
   static int setUpOurSocket(UsageEnvironment& env, Port& ourPort);
+  virtual Boolean specialClientAccessCheck(int clientSocket, struct sockaddr_in& clientAddr,
+					   char const* urlSuffix);
+      // a hook that allows subclassed servers to do server-specific access checking
+      // on each client (e.g., based on client IP address), without using
+      // digest authentication.
 
 private: // redefined virtual functions
   virtual Boolean isRTSPServer() const;
@@ -140,7 +147,8 @@ private:
     void handleCmd_GET_PARAMETER(ServerMediaSubsession* subsession,
 				 char const* cseq, char const* fullRequestStr);
     Boolean authenticationOK(char const* cmdName, char const* cseq,
-			     char const* fullRequestStr);
+                             char const* urlSuffix,
+                             char const* fullRequestStr);
     void noteLiveness();
     Boolean isMulticast() const { return fIsMulticast; }
     static void noteClientLiveness(RTSPClientSession* clientSession);

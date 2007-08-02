@@ -99,28 +99,34 @@ void RTSPServer::removeServerMediaSession(char const* streamName) {
   removeServerMediaSession(lookupServerMediaSession(streamName));
 }
 
-char* RTSPServer::rtspURLPrefix() const {
-  struct in_addr ourAddress;
-  ourAddress.s_addr = ReceivingInterfaceAddr != 0
-    ? ReceivingInterfaceAddr
-    : ourSourceAddressForMulticast(envir()); // hack
+char* RTSPServer::rtspURLPrefix(int clientSocket) const {
+  struct sockaddr_in ourAddress;
+  if (clientSocket < 0) {
+    // Use our default IP address in the URL:
+    ourAddress.sin_addr.s_addr = ReceivingInterfaceAddr != 0
+      ? ReceivingInterfaceAddr
+      : ourSourceAddressForMulticast(envir()); // hack
+  } else {
+    SOCKLEN_T namelen = sizeof ourAddress;
+    getsockname(clientSocket, (struct sockaddr*)&ourAddress, &namelen);
+  }
 
   char urlBuffer[100]; // more than big enough for "rtsp://<ip-address>:<port>/"
 
   portNumBits portNumHostOrder = ntohs(fServerPort.num());
   if (portNumHostOrder == 554 /* the default port number */) {
-    sprintf(urlBuffer, "rtsp://%s/", our_inet_ntoa(ourAddress));
+    sprintf(urlBuffer, "rtsp://%s/", our_inet_ntoa(ourAddress.sin_addr));
   } else {
     sprintf(urlBuffer, "rtsp://%s:%hu/",
-	    our_inet_ntoa(ourAddress), portNumHostOrder);
+	    our_inet_ntoa(ourAddress.sin_addr), portNumHostOrder);
   }
 
   return strDup(urlBuffer);
 }
 
 char* RTSPServer
-::rtspURL(ServerMediaSession const* serverMediaSession) const {
-  char* urlPrefix = rtspURLPrefix();
+::rtspURL(ServerMediaSession const* serverMediaSession, int clientSocket) const {
+  char* urlPrefix = rtspURLPrefix(clientSocket);
   char const* sessionName = serverMediaSession->streamName();
 
   char* resultURL = new char[strlen(urlPrefix) + strlen(sessionName) + 1];
@@ -158,6 +164,12 @@ int RTSPServer::setUpOurSocket(UsageEnvironment& env, Port& ourPort) {
 
   if (ourSocket != -1) ::closeSocket(ourSocket);
   return -1;
+}
+
+Boolean RTSPServer
+::specialClientAccessCheck(int /*clientSocket*/, struct sockaddr_in& /*clientAddr*/, char const* /*urlSuffix*/) {
+  // default implementation
+  return True;
 }
 
 RTSPServer::RTSPServer(UsageEnvironment& env,
@@ -426,14 +438,12 @@ void RTSPServer::RTSPClientSession::handleCmd_bad(char const* /*cseq*/) {
   snprintf((char*)fResponseBuffer, sizeof fResponseBuffer,
 	   "RTSP/1.0 400 Bad Request\r\n%sAllow: %s\r\n\r\n",
 	   dateHeader(), allowedCommandNames);
-  fSessionIsActive = False; // triggers deletion of ourself after responding
 }
 
 void RTSPServer::RTSPClientSession::handleCmd_notSupported(char const* cseq) {
   snprintf((char*)fResponseBuffer, sizeof fResponseBuffer,
 	   "RTSP/1.0 405 Method Not Allowed\r\nCSeq: %s\r\n%sAllow: %s\r\n\r\n",
 	   cseq, dateHeader(), allowedCommandNames);
-  fSessionIsActive = False; // triggers deletion of ourself after responding
 }
 
 void RTSPServer::RTSPClientSession::handleCmd_notFound(char const* cseq) {
@@ -462,7 +472,8 @@ void RTSPServer::RTSPClientSession
   char* sdpDescription = NULL;
   char* rtspURL = NULL;
   do {
-    if (!authenticationOK("DESCRIBE", cseq, fullRequestStr)) break;
+      if (!authenticationOK("DESCRIBE", cseq, urlSuffix, fullRequestStr))
+          break;
 
     // We should really check that the request contains an "Accept:" #####
     // for "application/sdp", because that's what we're sending back #####
@@ -493,7 +504,7 @@ void RTSPServer::RTSPClientSession
     // Also, generate our RTSP URL, for the "Content-Base:" header
     // (which is necessary to ensure that the correct URL gets used in
     // subsequent "SETUP" requests).
-    rtspURL = fOurServer.rtspURL(session);
+    rtspURL = fOurServer.rtspURL(session, fClientSocket);
 
     snprintf((char*)fResponseBuffer, sizeof fResponseBuffer,
 	     "RTSP/1.0 200 OK\r\nCSeq: %s\r\n"
@@ -746,6 +757,10 @@ void RTSPServer::RTSPClientSession
 				  serverRTPPort, serverRTCPPort,
 				  fStreamStates[streamNum].streamToken);
   struct in_addr destinationAddr; destinationAddr.s_addr = destinationAddress;
+  char* destAddrStr = strDup(our_inet_ntoa(destinationAddr));
+  struct sockaddr_in sourceAddr; SOCKLEN_T namelen = sizeof sourceAddr;
+  getsockname(fClientSocket, (struct sockaddr*)&sourceAddr, &namelen);
+  char* sourceAddrStr = strDup(our_inet_ntoa(sourceAddr.sin_addr));
   if (fIsMulticast) {
     switch (streamingMode) {
     case RTP_UDP:
@@ -753,11 +768,11 @@ void RTSPServer::RTSPClientSession
                  "RTSP/1.0 200 OK\r\n"
                  "CSeq: %s\r\n"
                  "%s"
-                 "Transport: RTP/AVP;multicast;destination=%s;port=%d-%d;ttl=%d\r\n"
+                 "Transport: RTP/AVP;multicast;destination=%s;source=%s;port=%d-%d;ttl=%d\r\n"
                  "Session: %d\r\n\r\n",
                  cseq,
                  dateHeader(),
-                 our_inet_ntoa(destinationAddr), ntohs(serverRTPPort.num()), ntohs(serverRTCPPort.num()), destinationTTL,
+                 destAddrStr, sourceAddrStr, ntohs(serverRTPPort.num()), ntohs(serverRTCPPort.num()), destinationTTL,
                  fOurSessionId);
         break;
     case RTP_TCP:
@@ -769,13 +784,11 @@ void RTSPServer::RTSPClientSession
                  "RTSP/1.0 200 OK\r\n"
                  "CSeq: %s\r\n"
                  "%s"
-                 "Transport: %s;multicast;destination=%s;client_port=%d;server_port=%d\r\n"
+                 "Transport: %s;multicast;destination=%s;source=%s;port=%d;ttl=%d\r\n"
                  "Session: %d\r\n\r\n",
                  cseq,
                  dateHeader(),
-                 streamingModeString,
-                 our_inet_ntoa(destinationAddr),
-                 ntohs(clientRTPPort.num()), ntohs(serverRTPPort.num()),
+                 streamingModeString, destAddrStr, sourceAddrStr, ntohs(serverRTPPort.num()), destinationTTL,
                  fOurSessionId);
         delete[] streamingModeString;
         break;
@@ -787,11 +800,11 @@ void RTSPServer::RTSPClientSession
 	       "RTSP/1.0 200 OK\r\n"
 	       "CSeq: %s\r\n"
 	       "%s"
-	       "Transport: RTP/AVP;unicast;destination=%s;client_port=%d-%d;server_port=%d-%d\r\n"
+	       "Transport: RTP/AVP;unicast;destination=%s;source=%s;client_port=%d-%d;server_port=%d-%d\r\n"
 	       "Session: %d\r\n\r\n",
 	       cseq,
 	       dateHeader(),
-	       our_inet_ntoa(destinationAddr), ntohs(clientRTPPort.num()), ntohs(clientRTCPPort.num()), ntohs(serverRTPPort.num()), ntohs(serverRTCPPort.num()),
+	       destAddrStr, sourceAddrStr, ntohs(clientRTPPort.num()), ntohs(clientRTCPPort.num()), ntohs(serverRTPPort.num()), ntohs(serverRTCPPort.num()),
 	       fOurSessionId);
       break;
     }
@@ -800,11 +813,11 @@ void RTSPServer::RTSPClientSession
 	       "RTSP/1.0 200 OK\r\n"
 	       "CSeq: %s\r\n"
 	       "%s"
-	       "Transport: RTP/AVP/TCP;unicast;destination=%s;interleaved=%d-%d\r\n"
+	       "Transport: RTP/AVP/TCP;unicast;destination=%s;source=%s;interleaved=%d-%d\r\n"
 	       "Session: %d\r\n\r\n",
 	       cseq,
 	       dateHeader(),
-	       our_inet_ntoa(destinationAddr), rtpChannelId, rtcpChannelId,
+	       destAddrStr, sourceAddrStr, rtpChannelId, rtcpChannelId,
 	       fOurSessionId);
       break;
     }
@@ -813,16 +826,17 @@ void RTSPServer::RTSPClientSession
 	       "RTSP/1.0 200 OK\r\n"
 	       "CSeq: %s\r\n"
 	       "%s"
-	       "Transport: %s;unicast;destination=%s;client_port=%d;server_port=%d\r\n"
+	       "Transport: %s;unicast;destination=%s;source=%s;client_port=%d;server_port=%d\r\n"
 	       "Session: %d\r\n\r\n",
 	       cseq,
 	       dateHeader(),
-	       streamingModeString, our_inet_ntoa(destinationAddr), ntohs(clientRTPPort.num()), ntohs(serverRTPPort.num()),
+	       streamingModeString, destAddrStr, sourceAddrStr, ntohs(clientRTPPort.num()), ntohs(serverRTPPort.num()),
 	       fOurSessionId);
       delete[] streamingModeString;
       break;
     }
     }
+    delete[] destAddrStr; delete[] sourceAddrStr;
   }
 }
 
@@ -909,7 +923,7 @@ static Boolean parseScaleHeader(char const* buf, float& scale) {
 void RTSPServer::RTSPClientSession
   ::handleCmd_PLAY(ServerMediaSubsession* subsession, char const* cseq,
 		   char const* fullRequestStr) {
-  char* rtspURL = fOurServer.rtspURL(fOurServerMediaSession);
+  char* rtspURL = fOurServer.rtspURL(fOurServerMediaSession, fClientSocket);
   unsigned rtspURLSize = strlen(rtspURL);
 
   //// Parse the client's "Scale:" header, if any: 
@@ -1131,7 +1145,18 @@ static Boolean parseAuthorizationHeader(char const* buf,
 
 Boolean RTSPServer::RTSPClientSession
 ::authenticationOK(char const* cmdName, char const* cseq,
-		   char const* fullRequestStr) {
+		   char const* urlSuffix, char const* fullRequestStr) {
+
+  if (!fOurServer.specialClientAccessCheck(fClientSocket, fClientAddr, urlSuffix)) {
+    snprintf((char*)fResponseBuffer, sizeof fResponseBuffer,
+             "RTSP/1.0 401 Unauthorized\r\n"
+             "CSeq: %s\r\n"
+             "%s"
+             "\r\n",
+             cseq, dateHeader());
+    return False;
+  }
+
   // If we weren't set up with an authentication database, we're OK:
   if (fOurServer.fAuthDB == NULL) return True;
 
