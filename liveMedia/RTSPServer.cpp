@@ -233,6 +233,8 @@ void RTSPServer::incomingConnectionHandler1() {
     return;
   }
   makeSocketNonBlocking(clientSocket);
+  increaseSendBufferTo(envir(), clientSocket, 50*1024);
+
 #if defined(DEBUG) || defined(DEBUG_CONNECTIONS)
   fprintf(stderr, "accept()ed connection from %s\n", our_inet_ntoa(clientAddr.sin_addr));
 #endif
@@ -592,33 +594,6 @@ static void parseTransportHeader(char const* buf,
   delete[] field;
 }
 
-static Boolean parseRangeHeader(char const* buf, float& rangeStart, float& rangeEnd) {
-  // Initialize the result parameters to default values:
-  rangeStart = rangeEnd = 0.0;
-
-  // First, find "Range:"
-  while (1) {
-    if (*buf == '\0') return False; // not found
-    if (_strncasecmp(buf, "Range: ", 7) == 0) break;
-    ++buf;
-  }
-
-  // Then, run through each of the fields, looking for ones we handle:
-  char const* fields = buf + 7;
-  while (*fields == ' ') ++fields;
-  float start, end;
-  if (sscanf(fields, "npt = %f - %f", &start, &end) == 2) {
-    rangeStart = start;
-    rangeEnd = end;
-  } else if (sscanf(fields, "npt = %f -", &start) == 1) {
-    rangeStart = start;
-  } else {
-    return False; // The header is malformed
-  }
-
-  return True;
-}
-
 static Boolean parsePlayNowHeader(char const* buf) {
   // Find "x-playNow:" header, if present
   while (1) {
@@ -728,7 +703,7 @@ void RTSPServer::RTSPClientSession
 
   // Next, check whether a "Range:" header is present in the request.
   // This isn't legal, but some clients do this to combine "SETUP" and "PLAY":
-  float rangeStart, rangeEnd;
+  float rangeStart = 0.0, rangeEnd = 0.0;
   fStreamAfterSETUP = parseRangeHeader(fullRequestStr, rangeStart, rangeEnd) ||
                       parsePlayNowHeader(fullRequestStr);
 
@@ -947,7 +922,7 @@ void RTSPServer::RTSPClientSession
   scaleHeader = strDup(buf);
 
   //// Parse the client's "Range:" header, if any: 
-  float rangeStart, rangeEnd;
+  float rangeStart = 0.0, rangeEnd = 0.0;
   Boolean sawRangeHeader = parseRangeHeader(fullRequestStr, rangeStart, rangeEnd);
 
   // Use this information, plus the stream's duration (if known), to create

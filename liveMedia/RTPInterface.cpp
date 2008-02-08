@@ -99,6 +99,7 @@ RTPInterface::RTPInterface(Medium* owner, Groupsock* gs)
   // even if the socket was previously reported (e.g., by "select()") as having data available.
   // (This can supposedly happen if the UDP checksum fails, for example.)
   makeSocketNonBlocking(fGS->socketNum());
+  increaseSendBufferTo(envir(), fGS->socketNum(), 50*1024);
 }
 
 RTPInterface::~RTPInterface() {
@@ -329,9 +330,13 @@ void SocketDescriptor::tcpReadHandler(SocketDescriptor* socketDescriptor,
     // (Later, fix) #####
     unsigned char c;
     struct sockaddr_in fromAddress;
+    struct timeval timeout;
     do {
-      if (readSocket(env, socketNum, &c, 1, fromAddress) != 1) { // error reading TCP socket
-	env.taskScheduler().turnOffBackgroundReadHandling(socketNum); // stops further calls to us
+      int result = readSocket(env, socketNum, &c, 1, fromAddress, &timeout);
+      if (result != 1) { // error reading TCP socket
+	if (result < 0) {
+	  env.taskScheduler().turnOffBackgroundReadHandling(socketNum); // stops further calls to us
+	}
 	return;
       }
     } while (c != '$');
