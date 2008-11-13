@@ -53,7 +53,7 @@ Boolean parseRTSPRequestString(char const* reqStr,
   // Skip over the prefix of any "rtsp://" or "rtsp:/" URL that follows:
   unsigned j = i+1;
   while (j < reqStrSize && (reqStr[j] == ' ' || reqStr[j] == '\t')) ++j; // skip over any additional white space
-  for (j = i+1; (int)j < (int)(reqStrSize-8); ++j) {
+  for (; (int)j < (int)(reqStrSize-8); ++j) {
     if ((reqStr[j] == 'r' || reqStr[j] == 'R')
 	&& (reqStr[j+1] == 't' || reqStr[j+1] == 'T')
 	&& (reqStr[j+2] == 's' || reqStr[j+2] == 'S')
@@ -90,7 +90,7 @@ Boolean parseRTSPRequestString(char const* reqStr,
       resultURLSuffix[n] = '\0';
 
       // Also look for the URL 'pre-suffix' before this:
-      unsigned k3 = --k1;
+      unsigned k3 = (k1 == 0) ? 0 : --k1;
       while (k3 > i && reqStr[k3] != '/') --k3;
       // the URL pre-suffix comes from [k3+1,k1]
 
@@ -134,7 +134,7 @@ Boolean parseRTSPRequestString(char const* reqStr,
   return True;
 }
 
-Boolean parseRangeHeader(char const* buf, float& rangeStart, float& rangeEnd) {
+Boolean parseRangeHeader(char const* buf, double& rangeStart, double& rangeEnd) {
   // First, find "Range:"
   while (1) {
     if (*buf == '\0') return False; // not found
@@ -145,12 +145,12 @@ Boolean parseRangeHeader(char const* buf, float& rangeStart, float& rangeEnd) {
   // Then, run through each of the fields, looking for ones we handle:
   char const* fields = buf + 7;
   while (*fields == ' ') ++fields;
-  float start, end;
+  double start, end;
   Locale("C", LC_NUMERIC);
-  if (sscanf(fields, "npt = %f - %f", &start, &end) == 2) {
+  if (sscanf(fields, "npt = %lf - %lf", &start, &end) == 2) {
     rangeStart = start;
     rangeEnd = end;
-  } else if (sscanf(fields, "npt = %f -", &start) == 1) {
+  } else if (sscanf(fields, "npt = %lf -", &start) == 1) {
     rangeStart = start;
     rangeEnd = 0.0;
   } else {
