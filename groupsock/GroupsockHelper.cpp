@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 **********/
 // "mTunnel" multicast access service
-// Copyright (c) 1996-2008 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2009 Live Networks, Inc.  All rights reserved.
 // Helper routines to implement 'group sockets'
 // Implementation
 
@@ -35,7 +35,7 @@ extern "C" int initializeWinsockIfNecessary();
 netAddressBits SendingInterfaceAddr = INADDR_ANY;
 netAddressBits ReceivingInterfaceAddr = INADDR_ANY;
 
-static void socketErr(UsageEnvironment& env, char* errorMsg) {
+static void socketErr(UsageEnvironment& env, char const* errorMsg) {
 	env.setResultErrMsg(errorMsg);
 }
 
@@ -744,23 +744,36 @@ int gettimeofday(struct timeval* tp, int* /*tz*/) {
   tp->tv_sec = (long) ((ularge.QuadPart - epoch) / 10000000L);
   tp->tv_usec = (long) (system_time.wMilliseconds * 1000);
 #else
-#ifdef USE_OLD_GETTIMEOFDAY_FOR_WINDOWS_CODE
-  struct timeb tb;
-  ftime(&tb);
-  tp->tv_sec = tb.time;
-  tp->tv_usec = 1000*tb.millitm;
-#else
+  static LARGE_INTEGER tickFrequency, epochOffset;
+
+  // For our first call, use "ftime()", so that we get a time with a proper epoch.
+  // For subsequent calls, use "QueryPerformanceCount()", because it's more fine-grain.
+  static Boolean isFirstCall = True;
+
   LARGE_INTEGER tickNow;
-  static LARGE_INTEGER tickFrequency;
-  static BOOL tickFrequencySet = FALSE;
-  if (tickFrequencySet == FALSE) {
-    QueryPerformanceFrequency(&tickFrequency);
-    tickFrequencySet = TRUE;
-  }
   QueryPerformanceCounter(&tickNow);
-  tp->tv_sec = (long) (tickNow.QuadPart / tickFrequency.QuadPart);
-  tp->tv_usec = (long) (((tickNow.QuadPart % tickFrequency.QuadPart) * 1000000L) / tickFrequency.QuadPart);
-#endif
+
+  if (isFirstCall) {
+    struct timeb tb;
+    ftime(&tb);
+    tp->tv_sec = tb.time;
+    tp->tv_usec = 1000*tb.millitm;
+
+    // Also get our counter frequency:
+    QueryPerformanceFrequency(&tickFrequency);
+
+    // And compute an offset to add to subsequent counter times, so we get a proper epoch:
+    epochOffset.QuadPart
+      = tb.time*tickFrequency.QuadPart + (tb.millitm*tickFrequency.QuadPart)/1000 - tickNow.QuadPart;
+
+    isFirstCall = False; // for next time
+  } else {
+    // Adjust our counter time so that we get a proper epoch:
+    tickNow.QuadPart += epochOffset.QuadPart;
+
+    tp->tv_sec = (long) (tickNow.QuadPart / tickFrequency.QuadPart);
+    tp->tv_usec = (long) (((tickNow.QuadPart % tickFrequency.QuadPart) * 1000000L) / tickFrequency.QuadPart);
+  }
 #endif
   return 0;
 }
