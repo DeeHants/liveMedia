@@ -298,7 +298,7 @@ void MultiFramedRTPSink
     sendPacketIfNecessary();
   } else {
     // Use this frame in our outgoing packet:
-    unsigned char * frameStart = fOutBuf->curPtr();
+    unsigned char* frameStart = fOutBuf->curPtr();
     fOutBuf->increment(numFrameBytesToUse);
         // do this now, in case "doSpecialFrameHandling()" calls "setFramePadding()" to append padding bytes
 
