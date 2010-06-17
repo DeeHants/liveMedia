@@ -862,6 +862,8 @@ Boolean RTSPClient::parseTransportParams(char const* paramsStr,
 
   char* foundServerAddressStr = NULL;
   Boolean foundServerPortNum = False;
+  portNumBits clientPortNum = 0;
+  Boolean foundClientPortNum = False;
   Boolean foundChannelIds = False;
   unsigned rtpCid, rtcpCid;
   Boolean isMulticast = True; // by default
@@ -875,6 +877,8 @@ Boolean RTSPClient::parseTransportParams(char const* paramsStr,
   while (sscanf(fields, "%[^;]", field) == 1) {
     if (sscanf(field, "server_port=%hu", &serverPortNum) == 1) {
       foundServerPortNum = True;
+    } else if (sscanf(field, "client_port=%hu", &clientPortNum) == 1) {
+      foundClientPortNum = True;
     } else if (_strncasecmp(field, "source=", 7) == 0) {
       delete[] foundServerAddressStr;
       foundServerAddressStr = strDup(field+7);
@@ -909,7 +913,15 @@ Boolean RTSPClient::parseTransportParams(char const* paramsStr,
   }
   delete[] foundDestinationStr;
 
-  if (foundServerPortNum || foundChannelIds) {
+  // We have a valid "Transport:" header if any of the following are true:
+  //   - We saw a "interleaved=" field, indicating RTP/RTCP-over-TCP streaming, or
+  //   - We saw a "server_port=" field, or
+  //   - We saw a "client_port=" field.
+  //     If we didn't also see a "server_port=" field, then the server port is assumed to be the same as the client port.
+  if (foundChannelIds || foundServerPortNum || foundClientPortNum) {
+    if (foundClientPortNum && !foundServerPortNum) {
+      serverPortNum = clientPortNum;
+    }
     serverAddressStr = foundServerAddressStr;
     return True;
   }
@@ -1002,11 +1014,14 @@ Boolean RTSPClient::handleSETUPResponse(MediaSubsession& subsession, char const*
 
 Boolean RTSPClient::handlePLAYResponse(MediaSession& session, MediaSubsession& subsession,
                                        char const* scaleParamsStr, char const* rangeParamsStr, char const* rtpInfoParamsStr) {
+  Boolean scaleOK = False, rangeOK = False;
   do {
     if (&session != NULL) {
       // The command was on the whole session
       if (scaleParamsStr != NULL && !parseScaleParam(scaleParamsStr, session.scale())) break;
+      scaleOK = True;
       if (rangeParamsStr != NULL && !parseRangeParam(rangeParamsStr, session.playStartTime(), session.playEndTime())) break;
+      rangeOK = True;
 
       u_int16_t seqNum; u_int32_t timestamp;
       if (rtpInfoParamsStr != NULL) {
@@ -1025,7 +1040,9 @@ Boolean RTSPClient::handlePLAYResponse(MediaSession& session, MediaSubsession& s
     } else {
       // The command was on a subsession
       if (scaleParamsStr != NULL && !parseScaleParam(scaleParamsStr, subsession.scale())) break;
+      scaleOK = True;
       if (rangeParamsStr != NULL && !parseRangeParam(rangeParamsStr, subsession._playStartTime(), subsession._playEndTime())) break;
+      rangeOK = True;
 
       u_int16_t seqNum; u_int32_t timestamp;
       if (rtpInfoParamsStr != NULL) {
@@ -1039,6 +1056,14 @@ Boolean RTSPClient::handlePLAYResponse(MediaSession& session, MediaSubsession& s
     return True;
   } while (0);
 
+  // An error occurred:
+  if (!scaleOK) {
+    envir().setResultMsg("Bad \"Scale:\" header");
+  } else if (!rangeOK) {
+    envir().setResultMsg("Bad \"Range:\" header");
+  } else {
+    envir().setResultMsg("Bad \"RTP-Info:\" header");
+  }
   return False;
 }
 
@@ -1061,24 +1086,31 @@ Boolean RTSPClient::handleTEARDOWNResponse(MediaSession& session, MediaSubsessio
 }
 
 Boolean RTSPClient::handleGET_PARAMETERResponse(char const* parameterName, char*& resultValueString) {
-  // If "parameterName" is non-empty, it should be (possibly followed by ':' and whitespace) at the start of the result string:
-  if (parameterName != NULL && parameterName[0] != '\0') {
-    if (parameterName[1] == '\0') return False; // sanity check; there should have been \r\n at the end of "parameterName"
+  do {
+    // If "parameterName" is non-empty, it should be (possibly followed by ':' and whitespace) at the start of the result string:
+    if (parameterName != NULL && parameterName[0] != '\0') {
+      if (parameterName[1] == '\0') break; // sanity check; there should have been \r\n at the end of "parameterName"
 
-    unsigned parameterNameLen = strlen(parameterName);
-    // ASSERT: parameterNameLen >= 2;
-    parameterNameLen -= 2; // because of the trailing \r\n
-    if (_strncasecmp(resultValueString, parameterName, parameterNameLen) != 0) return False; // parameter name wasn't in the output
-    resultValueString += parameterNameLen;
-    if (resultValueString[0] == ':') ++resultValueString;
-    while (resultValueString[0] == ' ' || resultValueString[0] == '\t') ++resultValueString;
-  }
+      unsigned parameterNameLen = strlen(parameterName);
+      // ASSERT: parameterNameLen >= 2;
+      parameterNameLen -= 2; // because of the trailing \r\n
+      if (_strncasecmp(resultValueString, parameterName, parameterNameLen) != 0) break; // parameter name wasn't in the output
+      resultValueString += parameterNameLen;
+      if (resultValueString[0] == ':') ++resultValueString;
+      while (resultValueString[0] == ' ' || resultValueString[0] == '\t') ++resultValueString;
+    }
 
-  // The rest of "resultValueStr" should be our desired result, but first trim off any \r and/or \n characters at the end:
-  unsigned resultLen = strlen(resultValueString);
-  while (resultLen > 0 && resultValueString[resultLen-1] == '\r' || resultValueString[resultLen-1] == '\n') --resultLen;
-  resultValueString[resultLen] = '\0';
-  return True;
+    // The rest of "resultValueStr" should be our desired result, but first trim off any \r and/or \n characters at the end:
+    unsigned resultLen = strlen(resultValueString);
+    while (resultLen > 0 && (resultValueString[resultLen-1] == '\r' || resultValueString[resultLen-1] == '\n')) --resultLen;
+    resultValueString[resultLen] = '\0';
+
+    return True;
+  } while (0);
+
+  // An error occurred:
+  envir().setResultMsg("Bad \"GET_PARAMETER\" response");
+  return False;
 }
 
 Boolean RTSPClient::handleAuthenticationFailure(char const* paramsStr) {
@@ -1107,6 +1139,7 @@ Boolean RTSPClient::handleAuthenticationFailure(char const* paramsStr) {
 
 Boolean RTSPClient::resendCommand(RequestRecord* request) {
   if (fVerbosityLevel >= 1) envir() << "Resending...\n";
+  if (request != NULL) request->cseq() = ++fCSeq;
   return sendRequest(request) != 0;
 }
 
@@ -1429,7 +1462,12 @@ void RTSPClient::handleResponseBytes(int newBytesRead) {
       } else if (checkForHeader(lineStart, "Scale:", 6, scaleParamsStr)) {
       } else if (checkForHeader(lineStart, "Range:", 6, rangeParamsStr)) {
       } else if (checkForHeader(lineStart, "RTP-Info:", 9, rtpInfoParamsStr)) {
-      } else if (checkForHeader(lineStart, "WWW-Authenticate:", 17, wwwAuthenticateParamsStr)) {
+      } else if (checkForHeader(lineStart, "WWW-Authenticate:", 17, headerParamsStr)) {
+	// If we've already seen a "WWW-Authenticate:" header, then we replace it with this new one only if
+	// the new one specifies "Digest" authentication:
+	if (wwwAuthenticateParamsStr == NULL || _strncasecmp(headerParamsStr, "Digest", 6) == 0) {
+	  wwwAuthenticateParamsStr = headerParamsStr;
+	}
       } else if (checkForHeader(lineStart, "Public:", 7, publicParamsStr)) {
       } else if (checkForHeader(lineStart, "Allow:", 6, publicParamsStr)) {
 	// Note: we accept "Allow:" instead of "Public:", so that "OPTIONS" requests made to HTTP servers will work.
