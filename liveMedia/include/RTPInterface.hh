@@ -62,14 +62,13 @@ public:
   void setStreamSocket(int sockNum, unsigned char streamChannelId);
   void addStreamSocket(int sockNum, unsigned char streamChannelId);
   void removeStreamSocket(int sockNum, unsigned char streamChannelId);
-  void setServerRequestAlternativeByteHandler(ServerRequestAlternativeByteHandler* handler, void* clientData);
+  void setServerRequestAlternativeByteHandler(int socketNum, ServerRequestAlternativeByteHandler* handler, void* clientData);
 
   void sendPacket(unsigned char* packet, unsigned packetSize);
   void startNetworkReading(TaskScheduler::BackgroundHandlerProc*
                            handlerProc);
   Boolean handleRead(unsigned char* buffer, unsigned bufferMaxSize,
-		     unsigned& bytesRead,
-		     struct sockaddr_in& fromAddress);
+		     unsigned& bytesRead, struct sockaddr_in& fromAddress, Boolean& packetReadWasIncomplete);
   void stopNetworkReading();
 
   UsageEnvironment& envir() const { return fOwner->envir(); }

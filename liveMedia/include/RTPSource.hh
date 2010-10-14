@@ -63,8 +63,8 @@ public:
     // hack to allow sending RTP over TCP (RFC 2236, section 10.12)
     fRTPInterface.setStreamSocket(sockNum, streamChannelId);
   }
-  void setServerRequestAlternativeByteHandler(ServerRequestAlternativeByteHandler* handler, void* clientData) {
-    fRTPInterface.setServerRequestAlternativeByteHandler(handler, clientData);
+  void setServerRequestAlternativeByteHandler(int socketNum, ServerRequestAlternativeByteHandler* handler, void* clientData) {
+    fRTPInterface.setServerRequestAlternativeByteHandler(socketNum, handler, clientData);
   }
 
   void setAuxilliaryReadHandler(AuxHandlerFunc* handlerFunc,
@@ -178,7 +178,7 @@ public:
   double totNumKBytesReceived() const;
 
   unsigned totNumPacketsExpected() const {
-    return fHighestExtSeqNumReceived - fBaseExtSeqNumReceived;
+    return (fHighestExtSeqNumReceived - fBaseExtSeqNumReceived) + 1;
   }
 
   unsigned baseExtSeqNumReceived() const { return fBaseExtSeqNumReceived; }
