@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2010 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2011 Live Networks, Inc.  All rights reserved.
 // A RTSP server
 // C++ header
 
@@ -153,10 +153,13 @@ protected:
 					 char const* cseq, char const* fullRequestStr);
     // Support for optional RTSP-over-HTTP tunneling:
     virtual Boolean parseHTTPRequestString(char* resultCmdName, unsigned resultCmdNameMaxSize,
-					   char* sessionCookie, unsigned sessionCookieMaxSize);
+					   char* urlSuffix, unsigned urlSuffixMaxSize,
+					   char* sessionCookie, unsigned sessionCookieMaxSize,
+					   char* acceptStr, unsigned acceptStrMaxSize);
     virtual void handleHTTPCmd_notSupported();
-    virtual void handleHTTPCmd_GET(char const* sessionCookie);
-    virtual Boolean handleHTTPCmd_POST(char const* sessionCookie, unsigned char const* extraData, unsigned extraDataSize);
+    virtual void handleHTTPCmd_TunnelingGET(char const* sessionCookie);
+    virtual Boolean handleHTTPCmd_TunnelingPOST(char const* sessionCookie, unsigned char const* extraData, unsigned extraDataSize);
+    virtual void handleHTTPCmd_StreamingGET(char const* urlSuffix, char const* fullRequestStr);
   protected:
     UsageEnvironment& envir() { return fOurServer.envir(); }
     void reclaimStreamStates();

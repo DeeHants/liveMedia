@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2010 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2011 Live Networks, Inc.  All rights reserved.
 // A filter that passes through (unchanged) chunks that contain an integral number
 // of MPEG-2 Transport Stream packets, but returning (in "fDurationInMicroseconds")
 // an updated estimate of the time gap between chunks.
@@ -216,7 +216,7 @@ void MPEG2TransportStreamFramer
     // (This can produce more accurate estimates for wildly VBR streams.)
     double meanPCRPeriod = 0.0;
     if (fTSPCRCount > 0) {
-      meanPCRPeriod=(double)fTSPacketCount/fTSPCRCount;
+      meanPCRPeriod = (double)fTSPacketCount/fTSPCRCount;
       if (fTSPacketCount - pidStatus->lastPacketNum < meanPCRPeriod*PCR_PERIOD_VARIATION_RATIO) return;
     }
 

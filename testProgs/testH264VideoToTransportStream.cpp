@@ -14,14 +14,13 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 **********/
 // Copyright (c) 1996-2011, Live Networks, Inc.  All rights reserved
-// A program that converts a MPEG-1 or 2 Program Stream file into
-// a Transport Stream file.
+// A program that converts a H.264 (Elementary Stream) video file into a Transport Stream file.
 // main program
 
 #include "liveMedia.hh"
 #include "BasicUsageEnvironment.hh"
 
-char const* inputFileName = "in.mpg";
+char const* inputFileName = "in.264";
 char const* outputFileName = "out.ts";
 
 void afterPlaying(void* clientData); // forward
@@ -41,16 +40,13 @@ int main(int argc, char** argv) {
     exit(1);
   }
 
-  // Create a MPEG demultiplexor that reads from that source.
-  MPEG1or2Demux* baseDemultiplexor = MPEG1or2Demux::createNew(*env, inputSource);
+  // Create a 'framer' filter for this file source, to generate presentation times for each NAL unit:
+  H264VideoStreamFramer* framer = H264VideoStreamFramer::createNew(*env, inputSource, True/*includeStartCodeInOutput*/);
 
-  // Create, from this, a source that returns raw PES packets:
-  MPEG1or2DemuxedElementaryStream* pesSource = baseDemultiplexor->newRawPESStream();
-
-  // And, from this, a filter that converts to MPEG-2 Transport Stream frames:
-  FramedSource* tsFrames
-    = MPEG2TransportStreamFromPESSource::createNew(*env, pesSource);
-
+  // Then create a filter that packs the H.264 video data into a Transport Stream:
+  MPEG2TransportStreamFromESSource* tsFrames = MPEG2TransportStreamFromESSource::createNew(*env);
+  tsFrames->addNewVideoSource(framer, 5/*mpegVersion: H.264*/);
+  
   // Open the output file as a 'file sink':
   MediaSink* outputSink = FileSink::createNew(*env, outputFileName);
   if (outputSink == NULL) {

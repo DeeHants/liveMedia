@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2010 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2011 Live Networks, Inc.  All rights reserved.
 // A generic RTSP client - for a single "rtsp://" URL
 // C++ header
 
@@ -142,13 +142,12 @@ public:
 			      RTSPClient*& resultClient);
 
   static Boolean parseRTSPURL(UsageEnvironment& env, char const* url,
-			      NetAddress& address, portNumBits& portNum, char const** urlSuffix = NULL);
-      // (ignores any "<username>[:<password>]@" in "url"); to get those, use:
-  static Boolean parseRTSPURLUsernamePassword(char const* url,
-					      char*& username, char*& password);
+			      char*& username, char*& password, NetAddress& address, portNumBits& portNum, char const** urlSuffix = NULL);
+      // Parses "url" as "rtsp://[<username>[:<password>]@]<server-address-or-name>[:<port>][/<stream-name>]"
+      // (Note that the returned "username" and "password" are either NULL, or heap-allocated strings that the caller must later delete[].)
 
   void setUserAgentString(char const* userAgentName);
-  // sets an alternative string to be used in RTSP "User-Agent:" headers
+      // sets an alternative string to be used in RTSP "User-Agent:" headers
 
   unsigned sessionTimeoutParameter() const { return fSessionTimeoutParameter; }
 
@@ -329,6 +328,9 @@ public:
 				   char*& parameterValue);
   Boolean teardownMediaSession(MediaSession& session);
   Boolean teardownMediaSubsession(MediaSubsession& subsession);
+
+  static Boolean parseRTSPURLUsernamePassword(char const* url,
+					      char*& username, char*& password);
 private: // used to implement the old interface:
   static void responseHandlerForSyncInterface(RTSPClient* rtspClient,
 					      int responseCode, char* responseString);
