@@ -68,12 +68,14 @@ MPEG2TransportFileServerMediaSubsession::createNew(UsageEnvironment& env,
 						   char const* fileName,
 						   char const* indexFileName,
 						   Boolean reuseFirstSource) {
+  MPEG2TransportStreamIndexFile* indexFile;
   if (indexFileName != NULL && reuseFirstSource) {
     // It makes no sense to support trick play if all clients use the same source.  Fix this:
     env << "MPEG2TransportFileServerMediaSubsession::createNew(): ignoring the index file name, because \"reuseFirstSource\" is set\n";
-    indexFileName = NULL;
+    indexFile = NULL;
+  } else {
+    indexFile = MPEG2TransportStreamIndexFile::createNew(env, indexFileName);
   }
-  MPEG2TransportStreamIndexFile* indexFile = MPEG2TransportStreamIndexFile::createNew(env, indexFileName);
   return new MPEG2TransportFileServerMediaSubsession(env, fileName, indexFile,
 						     reuseFirstSource);
 }
@@ -150,7 +152,7 @@ void MPEG2TransportFileServerMediaSubsession
 }
 
 void MPEG2TransportFileServerMediaSubsession
-::seekStream(unsigned clientSessionId, void* streamToken, double seekNPT) {
+::seekStream(unsigned clientSessionId, void* streamToken, double seekNPT, double seekDuration) {
   if (fIndexFile != NULL) { // we support 'trick play'
     ClientTrickPlayState* client = lookupClient(clientSessionId);
     if (client != NULL) {
@@ -159,7 +161,7 @@ void MPEG2TransportFileServerMediaSubsession
   }
 
   // Call the original, default version of this routine:
-  OnDemandServerMediaSubsession::seekStream(clientSessionId, streamToken, seekNPT);
+  OnDemandServerMediaSubsession::seekStream(clientSessionId, streamToken, seekNPT, seekDuration);
 }
 
 void MPEG2TransportFileServerMediaSubsession
@@ -190,8 +192,6 @@ void MPEG2TransportFileServerMediaSubsession
 
 FramedSource* MPEG2TransportFileServerMediaSubsession
 ::createNewStreamSource(unsigned clientSessionId, unsigned& estBitrate) {
-  estBitrate = 5000; // kbps, estimate
-
   // Create the video source:
   unsigned const inputDataChunkSize
     = TRANSPORT_PACKETS_PER_NETWORK_PACKET*TRANSPORT_PACKET_SIZE;
@@ -199,6 +199,14 @@ FramedSource* MPEG2TransportFileServerMediaSubsession
     = ByteStreamFileSource::createNew(envir(), fFileName, inputDataChunkSize);
   if (fileSource == NULL) return NULL;
   fFileSize = fileSource->fileSize();
+
+  // Use the file size and the duration to estimate the stream's bitrate:
+  if (fFileSize > 0 && fDuration > 0.0) {
+    estBitrate = (unsigned)((int64_t)fFileSize/(125*fDuration) + 0.5); // kbps, rounded
+  } else {
+    estBitrate = 5000; // kbps, estimate
+  }
+
 
   // Create a framer for the Transport Stream:
   MPEG2TransportStreamFramer* framer
