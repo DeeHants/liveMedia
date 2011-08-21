@@ -164,6 +164,7 @@ public: // should be protected, but some old compilers complain otherwise
     virtual void handleHTTPCmd_StreamingGET(char const* urlSuffix, char const* fullRequestStr);
   protected:
     UsageEnvironment& envir() { return fOurServer.envir(); }
+    void closeSockets();
     void reclaimStreamStates();
     void resetRequestBuffer();
     Boolean authenticationOK(char const* cmdName, char const* cseq,
@@ -200,6 +201,7 @@ public: // should be protected, but some old compilers complain otherwise
       ServerMediaSubsession* subsession;
       void* streamToken;
     } * fStreamStates;
+    unsigned fRecursionCount;
   };
 
 protected:
