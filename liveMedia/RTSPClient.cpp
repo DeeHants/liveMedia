@@ -1244,11 +1244,12 @@ void RTSPClient::responseHandlerForHTTP_GET1(int responseCode, char* responseStr
 
   // An error occurred.  Dequeue the pending request(s), and tell them about the error:
   fHTTPTunnelingConnectionIsPending = False;
-  while ((request = fRequestsAwaitingHTTPTunneling.dequeue()) != NULL) {
+  resetTCPSockets(); // do this now, in case an error handler deletes "this"
+  RequestQueue requestQueue(fRequestsAwaitingHTTPTunneling);
+  while ((request = requestQueue.dequeue()) != NULL) {
     handleRequestError(request);
     delete request;
   }
-  resetTCPSockets();
 }
 
 Boolean RTSPClient::setupHTTPTunneling2() {
@@ -1271,11 +1272,8 @@ void RTSPClient::connectionHandler1() {
 
   // Move all requests awaiting connection into a new, temporary queue, to clear "fRequestsAwaitingConnection"
   // (so that "sendRequest()" doesn't get confused by "fRequestsAwaitingConnection" being nonempty, and enqueue them all over again).
-  RequestQueue tmpRequestQueue;
+  RequestQueue tmpRequestQueue(fRequestsAwaitingConnection);
   RequestRecord* request;
-  while ((request = fRequestsAwaitingConnection.dequeue()) != NULL) {
-    tmpRequestQueue.enqueue(request);
-  }
 
   // Find out whether the connection succeeded or failed:
   do {
@@ -1299,11 +1297,11 @@ void RTSPClient::connectionHandler1() {
   } while (0);
 
   // An error occurred.  Tell all pending requests about the error:
+  resetTCPSockets(); // do this now, in case an error handler deletes "this"
   while ((request = tmpRequestQueue.dequeue()) != NULL) {
     handleRequestError(request);
     delete request;
   }
-  resetTCPSockets();
 }
 
 void RTSPClient::incomingDataHandler(void* instance, int /*mask*/) {
@@ -1346,17 +1344,24 @@ void RTSPClient::handleResponseBytes(int newBytesRead) {
       envir().setResultMsg("RTSP response was truncated. Increase \"RTSPClient::responseBufferSize\"");
     }
 
-    // An error occurred while reading our TCP socket.  Call all pending response handlers, indicating this error:
-    RequestRecord* request;
-    while ((request = fRequestsAwaitingResponse.dequeue()) != NULL) {
-      handleRequestError(request);
-      delete request;
-
-      if (newBytesRead > 0) break; // The "RTSP response was truncated" error is applied to the first response handler only
-    }
-
-    if (newBytesRead <= 0) resetTCPSockets();
+    // An error occurred while reading our TCP socket.  Call all pending response handlers, indicating this error.
+    // (However, the "RTSP response was truncated" error is applied to the first response handler only.)
     resetResponseBuffer();
+    RequestRecord* request;
+    if (newBytesRead > 0) { // The "RTSP response was truncated" error
+      if ((request = fRequestsAwaitingResponse.dequeue()) != NULL) {
+	handleRequestError(request);
+	delete request;
+      }
+    } else {
+      RequestQueue requestQueue(fRequestsAwaitingResponse);
+      resetTCPSockets(); // do this now, in case an error handler deletes "this"
+
+      while ((request = requestQueue.dequeue()) != NULL) {
+	handleRequestError(request);
+	delete request;
+      }
+    }
     return;    
   } while (0);
 
@@ -1366,6 +1371,7 @@ void RTSPClient::handleResponseBytes(int newBytesRead) {
   if (fVerbosityLevel >= 1 && newBytesRead > 1) envir() << "Received " << newBytesRead << " new bytes of response data.\n";
   
   unsigned numExtraBytesAfterResponse = 0;
+  Boolean responseSuccess = False; // by default
   do {
     // Data was read OK.  Look through the data that we've read so far, to see if it contains <CR><LF><CR><LF>.
     // (If not, wait for more data to arrive.)
@@ -1400,7 +1406,7 @@ void RTSPClient::handleResponseBytes(int newBytesRead) {
     char const* publicParamsStr = NULL;
     char* bodyStart = NULL;
     unsigned numBodyBytes = 0;
-    Boolean responseSuccess = False; // by default
+    responseSuccess = False;
     do {
       headerDataCopy = new char[responseBufferSize];
       strncpy(headerDataCopy, fResponseBuffer, fResponseBytesAlreadySeen);
@@ -1608,7 +1614,7 @@ void RTSPClient::handleResponseBytes(int newBytesRead) {
     delete foundRequest;
     delete[] headerDataCopy;
     if (numExtraBytesAfterResponse > 0 && numBodyBytes > 0) delete[] bodyStart;
-  } while (numExtraBytesAfterResponse > 0);
+  } while (numExtraBytesAfterResponse > 0 && responseSuccess);
 }
 
 
@@ -1633,6 +1639,14 @@ RTSPClient::RequestRecord::~RequestRecord() {
 
 RTSPClient::RequestQueue::RequestQueue()
   : fHead(NULL), fTail(NULL) {
+}
+
+RTSPClient::RequestQueue::RequestQueue(RequestQueue& origQueue)
+  : fHead(NULL), fTail(NULL) {
+  RequestRecord* request;
+  while ((request = origQueue.dequeue()) != NULL) {
+    enqueue(request);
+  }
 }
 
 RTSPClient::RequestQueue::~RequestQueue() {
