@@ -574,7 +574,7 @@ void MediaSubsessionIterator::reset() {
 ////////// MediaSubsession //////////
 
 MediaSubsession::MediaSubsession(MediaSession& parent)
-  : serverPortNum(0), sink(NULL), miscPtr(NULL),
+  : serverPortNum(0), sink(NULL), miscPtr(NULL), deferRTCPSetup(False),
     fParent(parent), fNext(NULL),
     fConnectionEndpointName(NULL),
     fClientPortNum(0), fRTPPayloadFormat(0xFF),
@@ -1318,9 +1318,14 @@ Boolean MediaSubsession::createSourceObjects(int useSpecialRTPoffset) {
 		   || strcmp(fCodecName, "SPEEX") == 0 // SPEEX audio
 		   || strcmp(fCodecName, "T140") == 0 // T.140 text (RFC 4103)
 		   || strcmp(fCodecName, "DAT12") == 0 // 12-bit nonlinear audio (RFC 3190)
+		   || strcmp(fCodecName, "VND.ONVIF.METADATA") == 0 // 'ONVIF' 'metadata' (a XML document)
 		   ) {
 	createSimpleRTPSource = True;
 	useSpecialRTPoffset = 0;
+	if (strcmp(fCodecName, "VND.ONVIF.METADATA") == 0) {
+	  // This RTP payload format uses the RTP "M" bit to indicate the end of the content (a XML document):
+	  doNormalMBitRule = True;
+	}
       } else if (useSpecialRTPoffset >= 0) {
 	// We don't know this RTP payload format, but try to receive
 	// it using a 'SimpleRTPSource' with the specified header offset:

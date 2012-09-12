@@ -113,7 +113,7 @@ static double dTimeNow() {
     return (double) (timeNow.tv_sec + timeNow.tv_usec/1000000.0);
 }
 
-static unsigned const maxPacketSize = 1450;
+static unsigned const maxRTCPPacketSize = 1450;
 	// bytes (1500, minus some allowance for IP, UDP, UMTP headers)
 static unsigned const preferredPacketSize = 1000; // bytes
 
@@ -147,14 +147,14 @@ RTCPInstance::RTCPInstance(UsageEnvironment& env, Groupsock* RTCPgs,
   fPrevReportTime = fNextReportTime = timeNow;
 
   fKnownMembers = new RTCPMemberDatabase(*this);
-  fInBuf = new unsigned char[maxPacketSize];
+  fInBuf = new unsigned char[maxRTCPPacketSize];
   if (fKnownMembers == NULL || fInBuf == NULL) return;
   fNumBytesAlreadyRead = 0;
 
   // A hack to save buffer space, because RTCP packets are always small:
   unsigned savedMaxSize = OutPacketBuffer::maxSize;
-  OutPacketBuffer::maxSize = maxPacketSize;
-  fOutBuf = new OutPacketBuffer(preferredPacketSize, maxPacketSize);
+  OutPacketBuffer::maxSize = maxRTCPPacketSize;
+  fOutBuf = new OutPacketBuffer(preferredPacketSize, maxRTCPPacketSize);
   OutPacketBuffer::maxSize = savedMaxSize;
   if (fOutBuf == NULL) return;
 
@@ -328,8 +328,12 @@ void RTCPInstance::incomingReportHandler1() {
     unsigned numBytesRead;
     struct sockaddr_in fromAddress;
     Boolean packetReadWasIncomplete;
+    if (fNumBytesAlreadyRead >= maxRTCPPacketSize) {
+      envir() << "RTCPInstance error: Hit limit when reading incoming packet over TCP. Increase \"maxRTCPPacketSize\"\n";
+      break;
+    }
     Boolean readResult
-      = fRTCPInterface.handleRead(&fInBuf[fNumBytesAlreadyRead], maxPacketSize - fNumBytesAlreadyRead,
+      = fRTCPInterface.handleRead(&fInBuf[fNumBytesAlreadyRead], maxRTCPPacketSize - fNumBytesAlreadyRead,
 				  numBytesRead, fromAddress, packetReadWasIncomplete);
     if (packetReadWasIncomplete) {
       fNumBytesAlreadyRead += numBytesRead;
@@ -379,7 +383,12 @@ void RTCPInstance::incomingReportHandler1() {
     }
 
 #ifdef DEBUG
-    fprintf(stderr, "[%p]saw incoming RTCP packet (from address %s, port %d)\n", this, AddressString(fromAddress).val(), ntohs(fromAddress.sin_port));
+    fprintf(stderr, "[%p]saw incoming RTCP packet", this);
+    if (tcpReadStreamSocketNum < 0) {
+      // Note that "fromAddress" is valid only if we're receiving over UDP (not over TCP):
+      fprintf(stderr, " (from address %s, port %d)", AddressString(fromAddress).val(), ntohs(fromAddress.sin_port));
+    }
+    fprintf(stderr, "\n");
     for (unsigned i = 0; i < packetSize; ++i) {
       if (i%4 == 0) fprintf(stderr, " ");
       fprintf(stderr, "%02x", pkt[i]);
