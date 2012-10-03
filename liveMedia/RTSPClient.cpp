@@ -297,10 +297,10 @@ RTSPClient::RTSPClient(UsageEnvironment& env, char const* rtspURL,
 		       int verbosityLevel, char const* applicationName,
 		       portNumBits tunnelOverHTTPPortNum)
   : Medium(env),
-    fVerbosityLevel(verbosityLevel), fTunnelOverHTTPPortNum(tunnelOverHTTPPortNum),
-    fUserAgentHeaderStr(NULL), fUserAgentHeaderStrLen(0), fInputSocketNum(-1), fOutputSocketNum(-1), fServerAddress(0), fCSeq(1),
-    fBaseURL(NULL), fTCPStreamIdCount(0), fLastSessionId(NULL), fSessionTimeoutParameter(0),
-    fSessionCookieCounter(0), fHTTPTunnelingConnectionIsPending(False) {
+    fVerbosityLevel(verbosityLevel), fCSeq(1),
+    fTunnelOverHTTPPortNum(tunnelOverHTTPPortNum), fUserAgentHeaderStr(NULL), fUserAgentHeaderStrLen(0),
+    fInputSocketNum(-1), fOutputSocketNum(-1), fServerAddress(0), fBaseURL(NULL), fTCPStreamIdCount(0),
+    fLastSessionId(NULL), fSessionTimeoutParameter(0), fSessionCookieCounter(0), fHTTPTunnelingConnectionIsPending(False) {
   setBaseURL(rtspURL);
 
   fResponseBuffer = new char[responseBufferSize+1];
@@ -1026,11 +1026,10 @@ Boolean RTSPClient::handleSETUPResponse(MediaSubsession& subsession, char const*
       if (subsession.rtpSource() != NULL) {
 	subsession.rtpSource()->setStreamSocket(fInputSocketNum, subsession.rtpChannelId);
 	subsession.rtpSource()->setServerRequestAlternativeByteHandler(fInputSocketNum, handleAlternativeRequestByte, this);
+	subsession.rtpSource()->enableRTCPReports() = False;
+	  // To avoid confusing the server (which won't start handling RTP/RTCP-over-TCP until "PLAY"), don't send RTCP "RR"s yet
       }
-      // Hack: Don't do the same for RTCP, yet, because we don't want the server to receive RTCP "RR" packets from us until
-      // after it has responded to the future "PLAY" command (because the server won't know how to handle RTCP packets embedded
-      // in the RTSP TCP connection until then).  Instead, flag that we need to defer this until after the "PLAY" response:
-      subsession.deferRTCPSetup = True;
+      if (subsession.rtcpInstance() != NULL) subsession.rtcpInstance()->setStreamSocket(fInputSocketNum, subsession.rtcpChannelId);
     } else {
       // Normal case.
       // Set the RTP and RTCP sockets' destination address and port from the information in the SETUP response (if present):
@@ -1081,13 +1080,7 @@ Boolean RTSPClient::handlePLAYResponse(MediaSession& session, MediaSubsession& s
 	  subsession->rtpInfo.infoIsNew = True;
 	}
 
-	if (subsession->deferRTCPSetup) {
-	  // Hack: See above.
-	  if (subsession->rtcpInstance() != NULL) {
-	    subsession->rtcpInstance()->setStreamSocket(fInputSocketNum, subsession->rtcpChannelId);
-	  }
-	  subsession->deferRTCPSetup = False; // because we do this only once, for the first "PLAY" after "SETUP"
-	}
+	if (subsession->rtpSource() != NULL) subsession->rtpSource()->enableRTCPReports() = True; // start sending RTCP "RR"s now
       }
     } else {
       // The command was on a subsession
@@ -1105,13 +1098,7 @@ Boolean RTSPClient::handlePLAYResponse(MediaSession& session, MediaSubsession& s
 	subsession.rtpInfo.infoIsNew = True;
       }
 
-      if (subsession.deferRTCPSetup) {
-	// Hack: See above.
-	if (subsession.rtcpInstance() != NULL) {
-	  subsession.rtcpInstance()->setStreamSocket(fInputSocketNum, subsession.rtcpChannelId);
-	}
-	subsession.deferRTCPSetup = False; // because we do this only once, for the first "PLAY" after "SETUP"
-      }
+      if (subsession.rtpSource() != NULL) subsession.rtpSource()->enableRTCPReports() = True; // start sending RTCP "RR"s now
     }
 
     return True;
