@@ -221,9 +221,8 @@ ProxyRTSPClient::ProxyRTSPClient(ProxyServerMediaSession& ourServerMediaSession,
   : RTSPClient(ourServerMediaSession.envir(), rtspURL, verbosityLevel, "ProxyRTSPClient",
 	       tunnelOverHTTPPortNum == (portNumBits)(~0) ? 0 : tunnelOverHTTPPortNum),
     fOurServerMediaSession(ourServerMediaSession), fOurURL(strDup(rtspURL)), fStreamRTPOverTCP(tunnelOverHTTPPortNum != 0),
-    fLivenessCommandTask(NULL), fDESCRIBECommandTask(NULL), fSubsessionTimerTask(NULL) {
-  reset();
-
+    fSetupQueueHead(NULL), fSetupQueueTail(NULL), fNumSetupsDone(0), fNextDESCRIBEDelay(1), fLastCommandWasPLAY(False),
+    fLivenessCommandTask(NULL), fDESCRIBECommandTask(NULL), fSubsessionTimerTask(NULL) { 
   if (username != NULL && password != NULL) {
     fOurAuthenticator = new Authenticator(username, password);
   } else {
@@ -240,6 +239,8 @@ void ProxyRTSPClient::reset() {
   fNumSetupsDone = 0;
   fNextDESCRIBEDelay = 1;
   fLastCommandWasPLAY = False;
+
+  RTSPClient::reset();
 }
 
 ProxyRTSPClient::~ProxyRTSPClient() {

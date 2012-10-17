@@ -67,9 +67,9 @@ private:
   Boolean fStreamRTPOverTCP;
   class ProxyServerMediaSubsession *fSetupQueueHead, *fSetupQueueTail;
   unsigned fNumSetupsDone;
-  TaskToken fLivenessCommandTask, fDESCRIBECommandTask, fSubsessionTimerTask;
   unsigned fNextDESCRIBEDelay; // in seconds
   Boolean fLastCommandWasPLAY;
+  TaskToken fLivenessCommandTask, fDESCRIBECommandTask, fSubsessionTimerTask;
 };
 
 
