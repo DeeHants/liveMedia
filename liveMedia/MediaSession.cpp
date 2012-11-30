@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2012 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2013 Live Networks, Inc.  All rights reserved.
 // A data structure that represents a session that consists of
 // potentially multiple (audio and/or video) sub-sessions
 // Implementation
@@ -1324,6 +1324,7 @@ Boolean MediaSubsession::createSourceObjects(int useSpecialRTPoffset) {
 		   || strcmp(fCodecName, "G726-40") == 0 // G.726, 40 kbps
 		   || strcmp(fCodecName, "SPEEX") == 0 // SPEEX audio
 		   || strcmp(fCodecName, "ILBC") == 0 // iLBC audio
+		   || strcmp(fCodecName, "OPUS") == 0 // Opus audio
 		   || strcmp(fCodecName, "T140") == 0 // T.140 text (RFC 4103)
 		   || strcmp(fCodecName, "DAT12") == 0 // 12-bit nonlinear audio (RFC 3190)
 		   || strcmp(fCodecName, "VND.ONVIF.METADATA") == 0 // 'ONVIF' 'metadata' (a XML document)

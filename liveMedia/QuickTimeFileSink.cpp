@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2012 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2013 Live Networks, Inc.  All rights reserved.
 // A sink that generates a QuickTime file from a composite media session
 // Implementation
 
@@ -1283,7 +1283,7 @@ void QuickTimeFileSink::setWord64(int64_t filePosn, u_int64_t size) {
   } while (0);
 
   // One of the SeekFile64()s failed, probable because we're not a seekable file
-  envir() << "QuickTimeFileSink::setWord(): SeekFile64 failed (err "
+  envir() << "QuickTimeFileSink::setWord64(): SeekFile64 failed (err "
 	  << envir().getErrno() << ")\n";
 }
 

@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2012 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2013 Live Networks, Inc.  All rights reserved.
 // A subclass of "ServerMediaSession" that can be used to create a (unicast) RTSP servers that acts as a 'proxy' for
 // another (unicast or multicast) RTSP/RTP stream.
 // C++ header
@@ -76,6 +76,7 @@ private:
 class ProxyServerMediaSession: public ServerMediaSession {
 public:
   static ProxyServerMediaSession* createNew(UsageEnvironment& env,
+					    RTSPServer* ourRTSPServer, // Note: We can be used by just one "RTSPServer"
 					    char const* inputStreamURL, // the "rtsp://" URL of the stream we'll be proxying
 					    char const* streamName = NULL,
 					    char const* username = NULL, char const* password = NULL,
@@ -95,7 +96,8 @@ public:
     // This can be used - along with "describeCompletdFlag" - to check whether the back-end "DESCRIBE" completed *successfully*.
 
 protected:
-  ProxyServerMediaSession(UsageEnvironment& env, char const* inputStreamURL, char const* streamName,
+  ProxyServerMediaSession(UsageEnvironment& env, RTSPServer* ourRTSPServer,
+			  char const* inputStreamURL, char const* streamName,
 			  char const* username, char const* password, portNumBits tunnelOverHTTPPortNum, int verbosityLevel);
 
   // If you subclass "ProxyRTSPClient", then you should also subclass "ProxyServerMediaSession" and redefine this virtual function
@@ -104,6 +106,7 @@ protected:
 						    portNumBits tunnelOverHTTPPortNum, int verbosityLevel);
 
 protected:
+  RTSPServer* fOurRTSPServer;
   ProxyRTSPClient* fProxyRTSPClient;
   MediaSession* fClientMediaSession;
 
@@ -111,10 +114,70 @@ private:
   friend class ProxyRTSPClient;
   friend class ProxyServerMediaSubsession;
   void continueAfterDESCRIBE(char const* sdpDescription);
+  void resetDESCRIBEState(); // undoes what was done by "contineAfterDESCRIBE()"
 
 private:
   int fVerbosityLevel;
   class PresentationTimeSessionNormalizer* fPresentationTimeSessionNormalizer;
+};
+
+
+////////// PresentationTimeSessionNormalizer and PresentationTimeSubsessionNormalizer definitions //////////
+
+// The following two classes are used by proxies to convert incoming streams' presentation times into wall-clock-aligned
+// presentation times that are suitable for our "RTPSink"s (for the corresponding outgoing streams).
+// (For multi-subsession (i.e., audio+video) sessions, the outgoing streams' presentation times retain the same relative
+//  separation as those of the incoming streams.)
+
+class PresentationTimeSubsessionNormalizer: public FramedFilter {
+public:
+  void setRTPSink(RTPSink* rtpSink) { fRTPSink = rtpSink; }
+
+private:
+  friend class PresentationTimeSessionNormalizer;
+  PresentationTimeSubsessionNormalizer(PresentationTimeSessionNormalizer& parent, FramedSource* inputSource, RTPSource* rtpSource,
+				       PresentationTimeSubsessionNormalizer* next);
+      // called only from within "PresentationTimeSessionNormalizer"
+  virtual ~PresentationTimeSubsessionNormalizer();
+
+  static void afterGettingFrame(void* clientData, unsigned frameSize,
+                                unsigned numTruncatedBytes,
+                                struct timeval presentationTime,
+                                unsigned durationInMicroseconds);
+  void afterGettingFrame(unsigned frameSize,
+			 unsigned numTruncatedBytes,
+			 struct timeval presentationTime,
+			 unsigned durationInMicroseconds);
+
+private: // redefined virtual functions:
+  virtual void doGetNextFrame();
+
+private:
+  PresentationTimeSessionNormalizer& fParent;
+  RTPSource* fRTPSource;
+  RTPSink* fRTPSink;
+  PresentationTimeSubsessionNormalizer* fNext;
+};
+
+class PresentationTimeSessionNormalizer: public Medium {
+public:
+  PresentationTimeSessionNormalizer(UsageEnvironment& env);
+  virtual ~PresentationTimeSessionNormalizer();
+
+  PresentationTimeSubsessionNormalizer*
+  createNewPresentationTimeSubsessionNormalizer(FramedSource* inputSource, RTPSource* rtpSource);
+
+private: // called only from within "~PresentationTimeSubsessionNormalizer":
+  friend class PresentationTimeSubsessionNormalizer;
+  void normalizePresentationTime(PresentationTimeSubsessionNormalizer* ssNormalizer,
+				 struct timeval& toPT, struct timeval const& fromPT);
+  void removePresentationTimeSubsessionNormalizer(PresentationTimeSubsessionNormalizer* ssNormalizer);
+
+private:
+  PresentationTimeSubsessionNormalizer* fSubsessionNormalizers;
+  PresentationTimeSubsessionNormalizer* fMasterSSNormalizer; // used for subsessions that have been RTCP-synced
+
+  struct timeval fPTAdjustment; // Added to (RTCP-synced) subsession presentation times to 'normalize' them with wall-clock time.
 };
 
 #endif

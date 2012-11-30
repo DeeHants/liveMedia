@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2012 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2013 Live Networks, Inc.  All rights reserved.
 // A data structure that represents a session that consists of
 // potentially multiple (audio and/or video) sub-sessions
 // (This data structure is used for media *streamers* - i.e., servers.
@@ -72,6 +72,12 @@ public:
   void incrementReferenceCount() { ++fReferenceCount; }
   void decrementReferenceCount() { if (fReferenceCount > 0) --fReferenceCount; }
   Boolean& deleteWhenUnreferenced() { return fDeleteWhenUnreferenced; }
+
+  void deleteAllSubsessions();
+    // Removes and deletes all subsessions added by "addSubsession()", returning us to an 'empty' state
+    // Note: If you have already added this "ServerMediaSession" to a "RTSPServer" then, before calling this function,
+    //   you must first close any client connections that use it,
+    //   by calling "RTSPServer::closeAllClientSessionsForServerMediaSession()".
 
 protected:
   ServerMediaSession(UsageEnvironment& env, char const* streamName,

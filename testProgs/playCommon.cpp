@@ -13,7 +13,7 @@ You should have received a copy of the GNU Lesser General Public License
 along with this library; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 **********/
-// Copyright (c) 1996-2012, Live Networks, Inc.  All rights reserved
+// Copyright (c) 1996-2013, Live Networks, Inc.  All rights reserved
 // A common framework, used for the "openRTSP" and "playSIP" applications
 // Implementation
 //
@@ -738,7 +738,7 @@ void setupStreams() {
 						 fileSinkBufferSize, oneFilePerFrame);
 	} else if (strcmp(subsession->mediumName(), "video") == 0 &&
 	    (strcmp(subsession->codecName(), "H264") == 0)) {
-	  // For H.264 video stream, we use a special sink that insert start_codes:
+	  // For H.264 video stream, we use a special sink that adds 'start codes', and (at the start) the SPS and PPS NAL units:
 	  fileSink = H264VideoFileSink::createNew(*env, outFileName,
 						  subsession->fmtp_spropparametersets(),
 						  fileSinkBufferSize, oneFilePerFrame);
