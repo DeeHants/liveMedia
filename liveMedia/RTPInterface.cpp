@@ -71,7 +71,7 @@ private:
   ServerRequestAlternativeByteHandler* fServerRequestAlternativeByteHandler;
   void* fServerRequestAlternativeByteHandlerClientData;
   u_int8_t fStreamChannelId, fSizeByte1;
-  Boolean fReadErrorOccurred, fDeleteMyselfNext;
+  Boolean fReadErrorOccurred, fDeleteMyselfNext, fAreInReadHandlerLoop;
   enum { AWAITING_DOLLAR, AWAITING_STREAM_CHANNEL_ID, AWAITING_SIZE1, AWAITING_SIZE2, AWAITING_PACKET_DATA } fTCPReadingState;
 };
 
@@ -129,6 +129,7 @@ RTPInterface::RTPInterface(Medium* owner, Groupsock* gs)
 }
 
 RTPInterface::~RTPInterface() {
+  stopNetworkReading();
   delete fTCPStreams;
 }
 
@@ -184,13 +185,16 @@ void RTPInterface::removeStreamSocket(int sockNum,
   }
 }
 
-void RTPInterface
-::setServerRequestAlternativeByteHandler(int socketNum, ServerRequestAlternativeByteHandler* handler, void* clientData) {
-  SocketDescriptor* socketDescriptor = lookupSocketDescriptor(envir(), socketNum);
+void RTPInterface::setServerRequestAlternativeByteHandler(UsageEnvironment& env, int socketNum,
+							  ServerRequestAlternativeByteHandler* handler, void* clientData) {
+  SocketDescriptor* socketDescriptor = lookupSocketDescriptor(env, socketNum);
 
   if (socketDescriptor != NULL) socketDescriptor->setServerRequestAlternativeByteHandler(handler, clientData);
 }
 
+void RTPInterface::clearServerRequestAlternativeByteHandler(UsageEnvironment& env, int socketNum) {
+  setServerRequestAlternativeByteHandler(env, socketNum, NULL, NULL);
+}
 
 Boolean RTPInterface::sendPacket(unsigned char* packet, unsigned packetSize) {
   Boolean success = True; // we'll return False instead if any of the sends fail
@@ -277,8 +281,7 @@ void RTPInterface::stopNetworkReading() {
   envir().taskScheduler().turnOffBackgroundReadHandling(fGS->socketNum());
 
   // Also turn off read handling on each of our TCP connections:
-  for (tcpStreamRecord* streams = fTCPStreams; streams != NULL;
-       streams = streams->fNext) {
+  for (tcpStreamRecord* streams = fTCPStreams; streams != NULL; streams = streams->fNext) {
     deregisterSocket(envir(), streams->fStreamSocketNum, streams->fStreamChannelId);
   }
 }
@@ -343,7 +346,7 @@ SocketDescriptor::SocketDescriptor(UsageEnvironment& env, int socketNum)
   :fEnv(env), fOurSocketNum(socketNum),
     fSubChannelHashTable(HashTable::create(ONE_WORD_HASH_KEYS)),
    fServerRequestAlternativeByteHandler(NULL), fServerRequestAlternativeByteHandlerClientData(NULL),
-   fReadErrorOccurred(False), fDeleteMyselfNext(False), fTCPReadingState(AWAITING_DOLLAR) {
+   fReadErrorOccurred(False), fDeleteMyselfNext(False), fAreInReadHandlerLoop(False), fTCPReadingState(AWAITING_DOLLAR) {
 }
 
 SocketDescriptor::~SocketDescriptor() {
@@ -358,7 +361,21 @@ SocketDescriptor::~SocketDescriptor() {
   removeSocketDescription(fEnv, fOurSocketNum);
 
   if (fSubChannelHashTable != NULL) {
-    while (fSubChannelHashTable->RemoveNext() != NULL) {} // remove the "RTPInterface"s from the table, but don't delete them
+    // Remove knowledge of this socket from any "RTPInterface"s that are using it:
+    HashTable::Iterator* iter = HashTable::Iterator::create(*fSubChannelHashTable);
+    RTPInterface* rtpInterface;
+    char const* key;
+
+    while ((rtpInterface = (RTPInterface*)(iter->next(key))) != NULL) {
+      long streamChannelIdLong = (long)key;
+      unsigned char streamChannelId = (unsigned char)streamChannelIdLong;
+
+      rtpInterface->removeStreamSocket(fOurSocketNum, streamChannelId);
+    }
+    delete iter;
+
+    // Then remove the hash table entries themselves, and then remove the hash table:
+    while (fSubChannelHashTable->RemoveNext() != NULL) {}
     delete fSubChannelHashTable;
   }
 }
@@ -396,14 +413,20 @@ void SocketDescriptor
 
   if (fSubChannelHashTable->IsEmpty()) {
     // No more interfaces are using us, so it's curtains for us now:
-    fDeleteMyselfNext = True; // hack to cause ourself to be deleted from "tcpReadHandler()" below
+    if (fAreInReadHandlerLoop) {
+      fDeleteMyselfNext = True; // we can't delete ourself yet, by we'll do so from "tcpReadHandler()" below
+    } else {
+      delete this;
+    }
   }
 }
 
 void SocketDescriptor::tcpReadHandler(SocketDescriptor* socketDescriptor, int mask) {
   // Call the read handler until it returns false, with a limit to avoid starving other sockets
   unsigned count = 2000;
+  socketDescriptor->fAreInReadHandlerLoop = True;
   while (!socketDescriptor->fDeleteMyselfNext && socketDescriptor->tcpReadHandler1(mask) && --count > 0) {}
+  socketDescriptor->fAreInReadHandlerLoop = False;
   if (socketDescriptor->fDeleteMyselfNext) delete socketDescriptor;
 }
 

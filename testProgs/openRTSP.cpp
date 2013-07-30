@@ -29,6 +29,10 @@ Medium* createClient(UsageEnvironment& env, char const* url, int verbosityLevel,
   return ourRTSPClient = RTSPClient::createNew(env, url, verbosityLevel, applicationName, tunnelOverHTTPPortNum);
 }
 
+void assignClient(Medium* client) {
+  ourRTSPClient = (RTSPClient*)client;
+}
+
 void getOptions(RTSPClient::responseHandler* afterFunc) { 
   ourRTSPClient->sendOptionsCommand(afterFunc, ourAuthenticator);
 }
@@ -37,8 +41,8 @@ void getSDPDescription(RTSPClient::responseHandler* afterFunc) {
   ourRTSPClient->sendDescribeCommand(afterFunc, ourAuthenticator);
 }
 
-void setupSubsession(MediaSubsession* subsession, Boolean streamUsingTCP, RTSPClient::responseHandler* afterFunc) {
-  Boolean forceMulticastOnUnspecified = False;
+void setupSubsession(MediaSubsession* subsession, Boolean streamUsingTCP, Boolean forceMulticastOnUnspecified, RTSPClient::responseHandler* afterFunc) {
+  
   ourRTSPClient->sendSetupCommand(*subsession, afterFunc, False, streamUsingTCP, forceMulticastOnUnspecified, ourAuthenticator);
 }
 

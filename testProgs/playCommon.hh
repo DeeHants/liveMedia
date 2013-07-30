@@ -20,6 +20,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include "liveMedia.hh"
 
 extern Medium* createClient(UsageEnvironment& env, char const* URL, int verbosityLevel, char const* applicationName);
+extern void assignClient(Medium* client);
 extern RTSPClient* ourRTSPClient;
 extern SIPClient* ourSIPClient;
 
@@ -27,7 +28,7 @@ extern void getOptions(RTSPClient::responseHandler* afterFunc);
 
 extern void getSDPDescription(RTSPClient::responseHandler* afterFunc);
 
-extern void setupSubsession(MediaSubsession* subsession, Boolean streamUsingTCP, RTSPClient::responseHandler* afterFunc);
+extern void setupSubsession(MediaSubsession* subsession, Boolean streamUsingTCP, Boolean forceMulticastOnUnspecified, RTSPClient::responseHandler* afterFunc);
 
 extern void startPlayingSession(MediaSession* session, double start, double end, float scale, RTSPClient::responseHandler* afterFunc);
 
