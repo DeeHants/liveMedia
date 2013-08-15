@@ -109,6 +109,7 @@ unsigned socketInputBufferSize = 0;
 Boolean packetLossCompensate = False;
 Boolean syncStreams = False;
 Boolean generateHintTracks = False;
+Boolean waitForResponseToTEARDOWN = True;
 unsigned qosMeasurementIntervalMS = 0; // 0 means: Don't output QOS data
 Boolean createHandlerServerForREGISTERCommand = False;
 portNumBits handlerServerForREGISTERCommandPortNum = 0;
@@ -1225,11 +1226,17 @@ void shutdown(int exitCode) {
   }
 
   // Teardown, then shutdown, any outstanding RTP/RTCP subsessions
+  Boolean shutdownImmediately = True; // by default
   if (session != NULL) {
-    tearDownSession(session, continueAfterTEARDOWN);
-  } else {
-    continueAfterTEARDOWN(NULL, 0, NULL);
+    RTSPClient::responseHandler* responseHandlerForTEARDOWN = NULL; // unless:
+    if (waitForResponseToTEARDOWN) {
+      shutdownImmediately = False;
+      responseHandlerForTEARDOWN = continueAfterTEARDOWN;
+    }
+    tearDownSession(session, responseHandlerForTEARDOWN);
   }
+
+  if (shutdownImmediately) continueAfterTEARDOWN(NULL, 0, NULL);
 }
 
 void continueAfterTEARDOWN(RTSPClient*, int /*resultCode*/, char* resultString) {
@@ -1249,6 +1256,7 @@ void continueAfterTEARDOWN(RTSPClient*, int /*resultCode*/, char* resultString) 
 
 void signalHandlerShutdown(int /*sig*/) {
   *env << "Got shutdown signal\n";
+  waitForResponseToTEARDOWN = False; // to ensure that we end, even if the server does not respond to our TEARDOWN
   shutdown(0);
 }
 
