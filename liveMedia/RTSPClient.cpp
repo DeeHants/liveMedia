@@ -593,6 +593,10 @@ unsigned RTSPClient::sendRequest(RequestRecord* request) {
     if (strcmp(request->commandName(), "DESCRIBE") == 0) {
       extraHeaders = (char*)"Accept: application/sdp\r\n";
     } else if (strcmp(request->commandName(), "OPTIONS") == 0) {
+      // If we're currently part of a session, create a "Session:" header (in case the server wants this to indicate
+      // client 'liveness); this makes up our 'extra headers':
+      extraHeaders = createSessionString(fLastSessionId);
+      extraHeadersWereAllocated = True;
     } else if (strcmp(request->commandName(), "ANNOUNCE") == 0) {
       extraHeaders = (char*)"Content-Type: application/sdp\r\n";
     } else if (strcmp(request->commandName(), "SETUP") == 0) {
@@ -667,7 +671,7 @@ unsigned RTSPClient::sendRequest(RequestRecord* request) {
       delete[] username;
       delete[] password;
 
-      protocolStr = "HTTP/1.0";
+      protocolStr = "HTTP/1.1";
 
       if (strcmp(request->commandName(), "GET") == 0) {
 	// Create a 'session cookie' string, using MD5:
@@ -1802,13 +1806,15 @@ char const* HandlerServerForREGISTERCommand::allowedCommandNames() {
   return "OPTIONS, REGISTER";
 }
 
-Boolean HandlerServerForREGISTERCommand::weImplementREGISTER() {
+Boolean HandlerServerForREGISTERCommand::weImplementREGISTER(char const* proxyURLSuffix, char*& responseStr) {
+  responseStr = NULL;
   return True;
 }
 
-void HandlerServerForREGISTERCommand::implementCmd_REGISTER(char const* url, char const* urlSuffix, int socketToRemoteServer) {
+void HandlerServerForREGISTERCommand::implementCmd_REGISTER(char const* url, char const* urlSuffix, int socketToRemoteServer,
+							    Boolean deliverViaTCP, char const* /*proxyURLSuffix*/) {
   // Create a new "RTSPClient" object, and call our 'creation function' with it:
   RTSPClient* newRTSPClient = createNewRTSPClient(url, fVerbosityLevel, fApplicationName, socketToRemoteServer);
 
-  if (fCreationFunc != NULL) (*fCreationFunc)(newRTSPClient);
+  if (fCreationFunc != NULL) (*fCreationFunc)(newRTSPClient, deliverViaTCP);
 }
