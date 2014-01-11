@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2013 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2014 Live Networks, Inc.  All rights reserved.
 // A data structure that represents a session that consists of
 // potentially multiple (audio and/or video) sub-sessions
 // Implementation
@@ -659,11 +659,12 @@ Boolean MediaSubsession::initiate(int useSpecialRTPoffset) {
     tempAddr.s_addr = connectionEndpointAddress();
         // This could get changed later, as a result of a RTSP "SETUP"
 
-    if (fClientPortNum != 0  && (honorSDPPortChoice || IsMulticastAddress(tempAddr.s_addr))) {
-      // This is a multicast stream, and the sockets' port numbers were specified for us.  Use these:
+    if (fClientPortNum != 0 && (honorSDPPortChoice || IsMulticastAddress(tempAddr.s_addr))) {
+      // The sockets' port numbers were specified for us.  Use these:
       Boolean const protocolIsRTP = strcmp(fProtocolName, "RTP") == 0;
       if (protocolIsRTP) {
-	fClientPortNum = fClientPortNum&~1; // use an even-numbered port for RTP, and the next (odd-numbered) port for RTCP
+	fClientPortNum = fClientPortNum&~1;
+	    // use an even-numbered port for RTP, and the next (odd-numbered) port for RTCP
       }
       if (isSSM()) {
 	fRTPSocket = new Groupsock(env(), tempAddr, fSourceFilterAddr, fClientPortNum);
@@ -687,12 +688,13 @@ Boolean MediaSubsession::initiate(int useSpecialRTPoffset) {
     } else {
       // Port numbers were not specified in advance, so we use ephemeral port numbers.
       // Create sockets until we get a port-number pair (even: RTP; even+1: RTCP).
-      // We need to make sure that we don't keep trying to use the same bad port numbers over and over again.
-      // so we store bad sockets in a table, and delete them all when we're done.
+      // We need to make sure that we don't keep trying to use the same bad port numbers over
+      // and over again, so we store bad sockets in a table, and delete them all when we're done.
       HashTable* socketHashTable = HashTable::create(ONE_WORD_HASH_KEYS);
       if (socketHashTable == NULL) break;
       Boolean success = False;
-      NoReuse dummy(env()); // ensures that our new ephemeral port number won't be one that's already in use
+      NoReuse dummy(env());
+          // ensures that our new ephemeral port number won't be one that's already in use
 
       while (1) {
 	// Create a new socket:
@@ -733,7 +735,7 @@ Boolean MediaSubsession::initiate(int useSpecialRTPoffset) {
 	  break;
 	} else {
 	  // We couldn't create the RTCP socket (perhaps that port number's already in use elsewhere?).
-	  delete fRTCPSocket;
+	  delete fRTCPSocket; fRTCPSocket = NULL;
 
 	  // Record the first socket in our table, and keep trying:
 	  unsigned key = (unsigned)fClientPortNum;
@@ -794,23 +796,19 @@ Boolean MediaSubsession::initiate(int useSpecialRTPoffset) {
     return True;
   } while (0);
 
-  delete fRTPSocket; fRTPSocket = NULL;
-  delete fRTCPSocket; fRTCPSocket = NULL;
-  Medium::close(fRTCPInstance); fRTCPInstance = NULL;
-  Medium::close(fReadSource); fReadSource = fRTPSource = NULL;
+  deInitiate();
   fClientPortNum = 0;
   return False;
 }
 
 void MediaSubsession::deInitiate() {
-  Medium::close(fRTCPInstance);
-  fRTCPInstance = NULL;
+  Medium::close(fRTCPInstance); fRTCPInstance = NULL;
 
   Medium::close(fReadSource); // this is assumed to also close fRTPSource
   fReadSource = NULL; fRTPSource = NULL;
 
-  delete fRTCPSocket; delete fRTPSocket;
-  fRTCPSocket = fRTPSocket = NULL;
+  delete fRTPSocket; fRTPSocket = NULL;
+  delete fRTCPSocket; fRTCPSocket = NULL;
 }
 
 Boolean MediaSubsession::setClientPortNum(unsigned short portNum) {

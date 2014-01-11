@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2013 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2014 Live Networks, Inc.  All rights reserved.
 // A sink that generates a QuickTime file from a composite media session
 // Implementation
 
@@ -314,10 +314,12 @@ QuickTimeFileSink::QuickTimeFileSink(UsageEnvironment& env,
 QuickTimeFileSink::~QuickTimeFileSink() {
   completeOutputFile();
 
-  // Then, delete each active "SubsessionIOState":
+  // Then, stop streaming and delete each active "SubsessionIOState":
   MediaSubsessionIterator iter(fInputSession);
   MediaSubsession* subsession;
   while ((subsession = iter.next()) != NULL) {
+    subsession->readSource()->stopGettingFrames();
+
     SubsessionIOState* ioState
       = (SubsessionIOState*)(subsession->miscPtr);
     if (ioState == NULL) continue;

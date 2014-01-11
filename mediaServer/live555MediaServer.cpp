@@ -13,7 +13,7 @@ You should have received a copy of the GNU Lesser General Public License
 along with this library; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 **********/
-// Copyright (c) 1996-2013, Live Networks, Inc.  All rights reserved
+// Copyright (c) 1996-2014, Live Networks, Inc.  All rights reserved
 // LIVE555 Media Server
 // main program
 
@@ -59,6 +59,7 @@ int main(int argc, char** argv) {
        << urlPrefix << "<filename>\nwhere <filename> is a file present in the current directory.\n";
   *env << "Each file's type is inferred from its name suffix:\n";
   *env << "\t\".264\" => a H.264 Video Elementary Stream file\n";
+  *env << "\t\".265\" => a H.265 Video Elementary Stream file\n";
   *env << "\t\".aac\" => an AAC Audio (ADTS format) file\n";
   *env << "\t\".ac3\" => an AC-3 Audio file\n";
   *env << "\t\".amr\" => an AMR Audio file\n";

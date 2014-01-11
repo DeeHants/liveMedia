@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2013 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2014 Live Networks, Inc.  All rights reserved.
 // A 'ServerMediaSubsession' object that creates new, unicast, "RTPSink"s
 // on demand, from an H264 video track within a Matroska file.
 // Implementation
@@ -98,7 +98,7 @@ float H264VideoMatroskaFileServerMediaSubsession::duration() const { return fOur
 void H264VideoMatroskaFileServerMediaSubsession
 ::seekStreamSource(FramedSource* inputSource, double& seekNPT, double /*streamDuration*/, u_int64_t& /*numBytes*/) {
   // "inputSource" is a framer. *Its* source is the demuxed track that we seek on:
-  H264VideoStreamFramer* framer = (H264VideoStreamFramer*)inputSource;
+  H264VideoStreamDiscreteFramer* framer = (H264VideoStreamDiscreteFramer*)inputSource;
 
   MatroskaDemuxedTrack* demuxedTrack = (MatroskaDemuxedTrack*)(framer->inputSource());
   demuxedTrack->seekToTime(seekNPT);
@@ -115,8 +115,9 @@ FramedSource* H264VideoMatroskaFileServerMediaSubsession
   if (baseH264VideoSource == NULL) return NULL;
   
   // Create a framer for the Video stream:
-  H264VideoStreamFramer* framer = H264VideoStreamDiscreteFramer::createNew(envir(), baseH264VideoSource);
-  framer->setSPSandPPS(fSPS, fSPSSize, fPPS, fPPSSize);
+  H264VideoStreamDiscreteFramer* framer
+    = H264VideoStreamDiscreteFramer::createNew(envir(), baseH264VideoSource);
+  framer->setVPSandSPSandPPS(NULL, 0, fSPS, fSPSSize, fPPS, fPPSSize);
 
   return framer;
 }

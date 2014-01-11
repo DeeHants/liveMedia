@@ -14,7 +14,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 **********/
 // "liveMedia"
-// Copyright (c) 1996-2013 Live Networks, Inc.  All rights reserved.
+// Copyright (c) 1996-2014 Live Networks, Inc.  All rights reserved.
 // Inclusion of header files representing the interface
 // for the entire library
 //
@@ -34,10 +34,14 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include "GSMAudioRTPSink.hh"
 #include "H263plusVideoRTPSink.hh"
 #include "H264VideoRTPSink.hh"
+#include "H265VideoRTPSink.hh"
 #include "DVVideoRTPSource.hh"
 #include "DVVideoRTPSink.hh"
 #include "DVVideoStreamFramer.hh"
+#include "H264VideoStreamFramer.hh"
+#include "H265VideoStreamFramer.hh"
 #include "H264VideoStreamDiscreteFramer.hh"
+#include "H265VideoStreamDiscreteFramer.hh"
 #include "JPEGVideoRTPSink.hh"
 #include "SimpleRTPSink.hh"
 #include "uLawAudioFilter.hh"
@@ -96,6 +100,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include "PassiveServerMediaSubsession.hh"
 #include "MPEG4VideoFileServerMediaSubsession.hh"
 #include "H264VideoFileServerMediaSubsession.hh"
+#include "H265VideoFileServerMediaSubsession.hh"
 #include "WAVAudioFileServerMediaSubsession.hh"
 #include "AMRAudioFileServerMediaSubsession.hh"
 #include "AMRAudioFileSource.hh"

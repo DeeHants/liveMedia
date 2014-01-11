@@ -13,7 +13,7 @@ You should have received a copy of the GNU Lesser General Public License
 along with this library; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 **********/
-// Copyright (c) 1996-2013, Live Networks, Inc.  All rights reserved
+// Copyright (c) 1996-2014, Live Networks, Inc.  All rights reserved
 // A test program that demonstrates how to stream - via unicast RTP
 // - various kinds of file on demand, using a built-in RTSP server.
 // main program
@@ -94,6 +94,20 @@ int main(int argc, char** argv) {
       = ServerMediaSession::createNew(*env, streamName, streamName,
 				      descriptionString);
     sms->addSubsession(H264VideoFileServerMediaSubsession
+		       ::createNew(*env, inputFileName, reuseFirstSource));
+    rtspServer->addServerMediaSession(sms);
+
+    announceStream(rtspServer, sms, streamName, inputFileName);
+  }
+
+  // A H.265 video elementary stream:
+  {
+    char const* streamName = "h265ESVideoTest";
+    char const* inputFileName = "test.265";
+    ServerMediaSession* sms
+      = ServerMediaSession::createNew(*env, streamName, streamName,
+				      descriptionString);
+    sms->addSubsession(H265VideoFileServerMediaSubsession
 		       ::createNew(*env, inputFileName, reuseFirstSource));
     rtspServer->addServerMediaSession(sms);
 
