@@ -90,6 +90,8 @@ H264or5VideoStreamFramer::~H264or5VideoStreamFramer() {
   delete[] fLastSeenVPS;
 }
 
+#define VPS_MAX_SIZE 1000 // larger than the largest possible VPS (Video Parameter Set) NAL unit
+
 void H264or5VideoStreamFramer::saveCopyOfVPS(u_int8_t* from, unsigned size) {
   if (from == NULL) return;
   delete[] fLastSeenVPS;
@@ -97,7 +99,19 @@ void H264or5VideoStreamFramer::saveCopyOfVPS(u_int8_t* from, unsigned size) {
   memmove(fLastSeenVPS, from, size);
 
   fLastSeenVPSSize = size;
+
+  // We also make another copy - without 'emulation bytes', to extract parameters that we need:
+  u_int8_t vps[VPS_MAX_SIZE];
+  unsigned vpsSize
+    = removeH264or5EmulationBytes(vps, VPS_MAX_SIZE, fLastSeenVPS, fLastSeenVPSSize);
+
+  // Extract the first 12 'profile_tier_level' bytes:
+  if (vpsSize >= 6/*'profile_tier_level' offset*/ + 12/*num 'profile_tier_level' bytes*/) {
+    memmove(fProfileTierLevelHeaderBytes, &vps[6], 12);
+  }
 }
+
+#define SPS_MAX_SIZE 1000 // larger than the largest possible SPS (Sequence Parameter Set) NAL unit
 
 void H264or5VideoStreamFramer::saveCopyOfSPS(u_int8_t* from, unsigned size) {
   if (from == NULL) return;
@@ -106,6 +120,22 @@ void H264or5VideoStreamFramer::saveCopyOfSPS(u_int8_t* from, unsigned size) {
   memmove(fLastSeenSPS, from, size);
 
   fLastSeenSPSSize = size;
+
+  // We also make another copy - without 'emulation bytes', to extract parameters that we need:
+  u_int8_t sps[SPS_MAX_SIZE];
+  unsigned spsSize
+    = removeH264or5EmulationBytes(sps, SPS_MAX_SIZE, fLastSeenSPS, fLastSeenSPSSize);
+  if (fHNumber == 264) {
+    // Extract the first 3 bytes of the SPS (after the nal_unit_header byte) as 'profile_level_id'
+    if (spsSize >= 1/*'profile_level_id' offset within SPS*/ + 3/*num bytes needed*/) {
+      fProfileLevelId = (sps[1]<<16) | (sps[2]<<8) | sps[3];
+    }
+  } else { // 265
+    // Extract the first 12 'profile_tier_level' bytes:
+    if (spsSize >= 3/*'profile_tier_level' offset*/ + 12/*num 'profile_tier_level' bytes*/) {
+      memmove(fProfileTierLevelHeaderBytes, &sps[3], 12);
+    }
+  }
 }
 
 void H264or5VideoStreamFramer::saveCopyOfPPS(u_int8_t* from, unsigned size) {
@@ -302,10 +332,9 @@ public:
 #endif
 
 void H264or5VideoStreamParser::profile_tier_level(BitVector& bv, unsigned max_sub_layers_minus1) {
-  // Get and save the first 96 bits (== 12 bytes) of this, in case the downstream object wants it:
-  unsigned i;
-  for (i = 0; i < 12; ++i) usingSource()->fProfileTierLevelHeaderBytes[i] = bv.getBits(8);
+  bv.skipBits(96);
 
+  unsigned i;
   Boolean sub_layer_profile_present_flag[7], sub_layer_level_present_flag[7];
   for (i = 0; i < max_sub_layers_minus1; ++i) {
     sub_layer_profile_present_flag[i] = bv.get1BitBoolean();
@@ -392,8 +421,6 @@ void H264or5VideoStreamParser
   }
 }
 
-#define VPS_MAX_SIZE 1000 // larger than the largest possible VPS (Video Parameter Set) NAL unit
-
 void H264or5VideoStreamParser
 ::analyze_video_parameter_set_data(unsigned& num_units_in_tick, unsigned& time_scale) {
   num_units_in_tick = time_scale = 0; // default values
@@ -447,8 +474,6 @@ void H264or5VideoStreamParser
   DEBUG_PRINT(vps_extension_flag);
 }
 
-#define SPS_MAX_SIZE 1000 // larger than the largest possible SPS (Sequence Parameter Set) NAL unit
-
 void H264or5VideoStreamParser
 ::analyze_seq_parameter_set_data(unsigned& num_units_in_tick, unsigned& time_scale) {
   num_units_in_tick = time_scale = 0; // default values
@@ -468,10 +493,6 @@ void H264or5VideoStreamParser
     DEBUG_PRINT(constraint_setN_flag);
     unsigned level_idc = bv.getBits(8);
     DEBUG_PRINT(level_idc);
-    // These three values make up the 'profile_level_id'.
-    // Save this, in case the downstream object wants to use it:
-    usingSource()->fProfileLevelId = (profile_idc<<16)|(constraint_setN_flag<<8)|level_idc;
-
     unsigned seq_parameter_set_id = bv.get_expGolomb();
     DEBUG_PRINT(seq_parameter_set_id);
     if (profile_idc == 100 || profile_idc == 110 || profile_idc == 122 || profile_idc == 244 || profile_idc == 44 || profile_idc == 83 || profile_idc == 86 || profile_idc == 118 || profile_idc == 128 ) {
@@ -943,7 +964,7 @@ unsigned H264or5VideoStreamParser::parse() {
     // Now that we have found (& copied) a NAL unit, process it if it's of special interest to us:
     if (isVPS(nal_unit_type)) { // Video parameter set
       // First, save a copy of this NAL unit, in case the downstream object wants to see it:
-      usingSource()->saveCopyOfVPS(fStartOfFrame + fOutputStartCodeSize, fTo - fStartOfFrame - fOutputStartCodeSize);
+      usingSource()->saveCopyOfVPS(fStartOfFrame + fOutputStartCodeSize, curFrameSize() - fOutputStartCodeSize);
 
       if (fParsedFrameRate == 0.0) {
 	// We haven't yet parsed a frame rate from the stream.
@@ -957,13 +978,13 @@ unsigned H264or5VideoStreamParser::parse() {
 #endif
 	} else {
 #ifdef DEBUG
-	  fprintf(stderr, "\tThis \"Picture Parameter Set\" NAL unit contained no frame rate information, so we use a default frame rate of %f fps\n", usingSource()->fFrameRate);
+	  fprintf(stderr, "\tThis \"Video Parameter Set\" NAL unit contained no frame rate information, so we use a default frame rate of %f fps\n", usingSource()->fFrameRate);
 #endif
 	}
       }
     } else if (isSPS(nal_unit_type)) { // Sequence parameter set
       // First, save a copy of this NAL unit, in case the downstream object wants to see it:
-      usingSource()->saveCopyOfSPS(fStartOfFrame + fOutputStartCodeSize, fTo - fStartOfFrame - fOutputStartCodeSize);
+      usingSource()->saveCopyOfSPS(fStartOfFrame + fOutputStartCodeSize, curFrameSize() - fOutputStartCodeSize);
 
       if (fParsedFrameRate == 0.0) {
 	// We haven't yet parsed a frame rate from the stream.
@@ -983,7 +1004,7 @@ unsigned H264or5VideoStreamParser::parse() {
       }
     } else if (isPPS(nal_unit_type)) { // Picture parameter set
       // Save a copy of this NAL unit, in case the downstream object wants to see it:
-      usingSource()->saveCopyOfPPS(fStartOfFrame + fOutputStartCodeSize, fTo - fStartOfFrame - fOutputStartCodeSize);
+      usingSource()->saveCopyOfPPS(fStartOfFrame + fOutputStartCodeSize, curFrameSize() - fOutputStartCodeSize);
     } else if (isSEI(nal_unit_type)) { // Supplemental enhancement information (SEI)
       analyze_sei_data(nal_unit_type);
       // Later, perhaps adjust "fPresentationTime" if we saw a "pic_timing" SEI payload??? #####
