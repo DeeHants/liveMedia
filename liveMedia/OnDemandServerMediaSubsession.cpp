@@ -63,6 +63,7 @@ OnDemandServerMediaSubsession::sdpLines() {
     unsigned char rtpPayloadType = 96 + trackNumber()-1; // if dynamic
     RTPSink* dummyRTPSink
       = createNewRTPSink(&dummyGroupsock, rtpPayloadType, inputSource);
+    if (dummyRTPSink != NULL && dummyRTPSink->estimatedBitrate() > 0) estBitrate = dummyRTPSink->estimatedBitrate();
 
     setSDPLinesFromRTPSink(dummyRTPSink, inputSource, estBitrate);
     Medium::close(dummyRTPSink);
@@ -110,7 +111,7 @@ void OnDemandServerMediaSubsession
     Groupsock* rtpGroupsock = NULL;
     Groupsock* rtcpGroupsock = NULL;
 
-    if (clientRTPPort.num() != 0) { // Normal case: Create destinations
+    if (clientRTPPort.num() != 0 || tcpSocketNum >= 0) { // Normal case: Create destinations
       portNumBits serverPortNum;
       if (clientRTCPPort.num() == 0) {
 	// We're streaming raw UDP (not RTP). Create a single groupsock:
@@ -151,6 +152,7 @@ void OnDemandServerMediaSubsession
 
 	unsigned char rtpPayloadType = 96 + trackNumber()-1; // if dynamic
 	rtpSink = createNewRTPSink(rtpGroupsock, rtpPayloadType, mediaSource);
+	if (rtpSink != NULL && rtpSink->estimatedBitrate() > 0) streamBitrate = rtpSink->estimatedBitrate();
       }
 
       // Turn off the destinations for each groupsock.  They'll get set later
@@ -245,11 +247,19 @@ void OnDemandServerMediaSubsession::seekStream(unsigned /*clientSessionId*/,
   }
 }
 
-void OnDemandServerMediaSubsession::nullSeekStream(unsigned /*clientSessionId*/, void* streamToken) {
+void OnDemandServerMediaSubsession::nullSeekStream(unsigned /*clientSessionId*/, void* streamToken,
+						   double streamEndTime, u_int64_t& numBytes) {
+  numBytes = 0; // by default: unknown
+
   StreamState* streamState = (StreamState*)streamToken;
   if (streamState != NULL && streamState->mediaSource() != NULL) {
     // Because we're not seeking here, get the current NPT, and remember it as the new 'start' NPT:
     streamState->startNPT() = getCurrentNPT(streamToken);
+
+    double duration = streamEndTime - streamState->startNPT();
+    if (duration < 0.0) duration = 0.0;
+    setStreamSourceDuration(streamState->mediaSource(), duration, numBytes);
+
     RTPSink* rtpSink = streamState->rtpSink(); // alias
     if (rtpSink != NULL) rtpSink->resetPresentationTimes();
   }
@@ -326,6 +336,7 @@ char const* OnDemandServerMediaSubsession
 void OnDemandServerMediaSubsession::seekStreamSource(FramedSource* /*inputSource*/,
 						     double& /*seekNPT*/, double /*streamDuration*/, u_int64_t& numBytes) {
   // Default implementation: Do nothing
+  numBytes = 0;
 }
 
 void OnDemandServerMediaSubsession::seekStreamSource(FramedSource* /*inputSource*/,
@@ -338,6 +349,12 @@ void OnDemandServerMediaSubsession::seekStreamSource(FramedSource* /*inputSource
 void OnDemandServerMediaSubsession
 ::setStreamSourceScale(FramedSource* /*inputSource*/, float /*scale*/) {
   // Default implementation: Do nothing
+}
+
+void OnDemandServerMediaSubsession
+::setStreamSourceDuration(FramedSource* /*inputSource*/, double /*streamDuration*/, u_int64_t& numBytes) {
+  // Default implementation: Do nothing
+  numBytes = 0;
 }
 
 void OnDemandServerMediaSubsession::closeStreamSource(FramedSource *inputSource) {
