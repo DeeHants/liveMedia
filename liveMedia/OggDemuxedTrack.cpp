@@ -15,33 +15,29 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 **********/
 // "liveMedia"
 // Copyright (c) 1996-2014 Live Networks, Inc.  All rights reserved.
-// A media track, demultiplexed from a Matroska file
+// A media track, demultiplexed from an Ogg file
 // Implementation
 
-#include "MatroskaDemuxedTrack.hh"
-#include "MatroskaFile.hh"
+#include "OggDemuxedTrack.hh"
+#include "OggFile.hh"
 
-void MatroskaDemuxedTrack::seekToTime(double& seekNPT) {
-  fOurSourceDemux.seekToTime(seekNPT);
-}
-
-MatroskaDemuxedTrack::MatroskaDemuxedTrack(UsageEnvironment& env, unsigned trackNumber, MatroskaDemux& sourceDemux)
+OggDemuxedTrack::OggDemuxedTrack(UsageEnvironment& env, unsigned trackNumber, OggDemux& sourceDemux)
   : FramedSource(env),
-    fOurTrackNumber(trackNumber), fOurSourceDemux(sourceDemux), fDurationImbalance(0),
-    fOpusTrackNumber(0) {
-  fPrevPresentationTime.tv_sec = 0; fPrevPresentationTime.tv_usec = 0;
+    fOurTrackNumber(trackNumber), fOurSourceDemux(sourceDemux),
+    fCurrentPageIsContinuation(False) {
+  fNextPresentationTime.tv_sec = 0; fNextPresentationTime.tv_usec = 0;
 }
 
-MatroskaDemuxedTrack::~MatroskaDemuxedTrack() {
+OggDemuxedTrack::~OggDemuxedTrack() {
   fOurSourceDemux.removeTrack(fOurTrackNumber);
 }
 
-void MatroskaDemuxedTrack::doGetNextFrame() {
+void OggDemuxedTrack::doGetNextFrame() {
   fOurSourceDemux.continueReading();
 }
 
-char const* MatroskaDemuxedTrack::MIMEtype() const {
-  MatroskaTrack* track = fOurSourceDemux.fOurFile.lookup(fOurTrackNumber);
+char const* OggDemuxedTrack::MIMEtype() const {
+  OggTrack* track = fOurSourceDemux.fOurFile.lookup(fOurTrackNumber);
   if (track == NULL) return "(unknown)"; // shouldn't happen
   return track->mimeType;
 }

@@ -268,7 +268,6 @@ Boolean RTPInterface::handleRead(unsigned char* buffer, unsigned bufferMaxSize,
       packetReadWasIncomplete = True;
       return True;
     }
-    fNextTCPReadStreamSocketNum = -1; // default, for next time
   }
 
   if (readSuccess && fAuxReadHandlerFunc != NULL) {

@@ -26,10 +26,12 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include <MPEG1or2AudioRTPSink.hh>
 #include <MPEG4GenericRTPSink.hh>
 #include <AC3AudioRTPSink.hh>
+#include <SimpleRTPSink.hh>
 #include <VorbisAudioRTPSink.hh>
 #include <H264VideoRTPSink.hh>
 #include <H265VideoRTPSink.hh>
 #include <VP8VideoRTPSink.hh>
+#include <TheoraVideoRTPSink.hh>
 #include <T140TextRTPSink.hh>
 
 ////////// CuePoint definition //////////
@@ -266,7 +268,7 @@ FramedSource* MatroskaFile
     } else if (strcmp(track->mimeType, "video/H264") == 0) {
       estBitrate = 500;
       // Allow for the possibility of very large NAL units being fed to the sink object:
-      OutPacketBuffer::maxSize = 300000; // bytes
+      OutPacketBuffer::increaseMaxSizeTo(300000); // bytes
 
       // Add a framer in front of the source:
       result = H264VideoStreamDiscreteFramer::createNew(envir(), result);
@@ -274,12 +276,14 @@ FramedSource* MatroskaFile
     } else if (strcmp(track->mimeType, "video/H265") == 0) {
       estBitrate = 500;
       // Allow for the possibility of very large NAL units being fed to the sink object:
-      OutPacketBuffer::maxSize = 300000; // bytes
+      OutPacketBuffer::increaseMaxSizeTo(300000); // bytes
 
       // Add a framer in front of the source:
       result = H265VideoStreamDiscreteFramer::createNew(envir(), result);
       ++numFiltersInFrontOfTrack;
     } else if (strcmp(track->mimeType, "video/VP8") == 0) {
+      estBitrate = 500;
+    } else if (strcmp(track->mimeType, "video/THEORA") == 0) {
       estBitrate = 500;
     } else if (strcmp(track->mimeType, "text/T140") == 0) {
       estBitrate = 48;
@@ -289,7 +293,7 @@ FramedSource* MatroskaFile
   return result;
 }
 
-#define getPrivByte(b) if (n == 0) break; else do {b = *p++; --n;} while (0) /* Vorbis parsing */
+#define getPrivByte(b) if (n == 0) break; else do {b = *p++; --n;} while (0) /* Vorbis/Theora configuration header parsing */
 #define CHECK_PTR if (ptr >= limit) break /* H.264/H.265 parsing */
 #define NUM_BYTES_REMAINING (unsigned)(limit - ptr) /* H.264/H.265 parsing */
 
@@ -322,14 +326,18 @@ RTPSink* MatroskaFile
     } else if (strcmp(track->mimeType, "audio/AC3") == 0) {
       result = AC3AudioRTPSink
 	::createNew(envir(), rtpGroupsock, rtpPayloadTypeIfDynamic, track->samplingFrequency);
-    } else if (strcmp(track->mimeType, "audio/VORBIS") == 0) {
-      // The Matroska file's 'Codec Private' data is assumed to be the Vorbis configuration
+    } else if (strcmp(track->mimeType, "audio/OPUS") == 0) {
+      result = SimpleRTPSink
+	::createNew(envir(), rtpGroupsock, rtpPayloadTypeIfDynamic,
+		    48000, "audio", "OPUS", 2, False/*only 1 Opus 'packet' in each RTP packet*/);
+    } else if (strcmp(track->mimeType, "audio/VORBIS") == 0 || strcmp(track->mimeType, "video/THEORA") == 0) {
+      // The Matroska file's 'Codec Private' data is assumed to be the codec configuration
       // information, containing the "Identification", "Comment", and "Setup" headers.
       // Extract these headers now:
       u_int8_t* identificationHeader = NULL; unsigned identificationHeaderSize = 0;
       u_int8_t* commentHeader = NULL; unsigned commentHeaderSize = 0;
       u_int8_t* setupHeader = NULL; unsigned setupHeaderSize = 0;
-      unsigned estimatedBitrate = 0;
+      Boolean isTheora = strcmp(track->mimeType, "video/THEORA") == 0; // otherwise, Vorbis
 
       do {
 	u_int8_t* p = track->codecPrivate;
@@ -392,38 +400,13 @@ RTPSink* MatroskaFile
 	  }
 	  
 	  u_int8_t headerType = newHeader[0];
-	  if (headerType == 1) {
+	  if (headerType == 1 || (isTheora && headerType == 0x80)) { // "identification" header
 	    delete[] identificationHeader; identificationHeader = newHeader;
 	    identificationHeaderSize = headerSize[i];
-	    
-	    if (identificationHeaderSize >= 28) {
-	      // Get the 'bitrate' values from this header, and use them to set "estimatedBitrate":
-	      u_int32_t val;
-	      u_int8_t* p;
-	      
-	      p = &identificationHeader[16];
-	      val = ((p[3]*256 + p[2])*256 + p[1])*256 + p[0]; // i.e., little-endian
-	      int bitrate_maximum = (int)val;
-	      if (bitrate_maximum < 0) bitrate_maximum = 0;
-	      
-	      p = &identificationHeader[20];
-	      val = ((p[3]*256 + p[2])*256 + p[1])*256 + p[0]; // i.e., little-endian
-	      int bitrate_nominal = (int)val;
-	      if (bitrate_nominal < 0) bitrate_nominal = 0;
-	      
-	      p = &identificationHeader[24];
-	      val = ((p[3]*256 + p[2])*256 + p[1])*256 + p[0]; // i.e., little-endian
-	      int bitrate_minimum = (int)val;
-	      if (bitrate_minimum < 0) bitrate_minimum = 0;
-	      
-	      int bitrate
-		= bitrate_nominal>0 ? bitrate_nominal : bitrate_maximum>0 ? bitrate_maximum : bitrate_minimum>0 ? bitrate_minimum : 0;
-	      if (bitrate > 0) estimatedBitrate = ((unsigned)bitrate)/1000;
-	    }
-	  } else if (headerType == 3) {
+	  } else if (headerType == 3 || (isTheora && headerType == 0x81)) { // "comment" header
 	    delete[] commentHeader; commentHeader = newHeader;
 	    commentHeaderSize = headerSize[i];
-	  } else if (headerType == 5) {
+	  } else if (headerType == 5 || (isTheora && headerType == 0x82)) { // "setup" header
 	    delete[] setupHeader; setupHeader = newHeader;
 	    setupHeaderSize = headerSize[i];
 	  } else {
@@ -432,14 +415,20 @@ RTPSink* MatroskaFile
 	}
 	if (!success) break;
 
-	result = VorbisAudioRTPSink
-	  ::createNew(envir(), rtpGroupsock, rtpPayloadTypeIfDynamic,
-		      track->samplingFrequency, track->numChannels,
-		      identificationHeader, identificationHeaderSize,
-		      commentHeader, commentHeaderSize,
-		      setupHeader, setupHeaderSize);
-	if (result == NULL) break;
-	result->estimatedBitrate() = estimatedBitrate;
+	if (isTheora) {
+	  result = TheoraVideoRTPSink
+	    ::createNew(envir(), rtpGroupsock, rtpPayloadTypeIfDynamic,
+			identificationHeader, identificationHeaderSize,
+			commentHeader, commentHeaderSize,
+			setupHeader, setupHeaderSize);
+	} else { // Vorbis
+	  result = VorbisAudioRTPSink
+	    ::createNew(envir(), rtpGroupsock, rtpPayloadTypeIfDynamic,
+			track->samplingFrequency, track->numChannels,
+			identificationHeader, identificationHeaderSize,
+			commentHeader, commentHeaderSize,
+			setupHeader, setupHeaderSize);
+	}
       } while (0);
 
       delete[] identificationHeader; delete[] commentHeader; delete[] setupHeader;
@@ -716,7 +705,8 @@ MatroskaTrack::MatroskaTrack()
     defaultDuration(0),
     name(NULL), language(NULL), codecID(NULL),
     samplingFrequency(0), numChannels(2), mimeType(""),
-    codecPrivateSize(0), codecPrivate(NULL), codecPrivateUsesH264FormatForH265(False),
+    codecPrivateSize(0), codecPrivate(NULL),
+    codecPrivateUsesH264FormatForH265(False), codecIsOpus(False),
     headerStrippedBytesSize(0), headerStrippedBytes(NULL),
     subframeSizeSize(0) {
 }

@@ -54,8 +54,9 @@ OggFileSink::OggFileSink(UsageEnvironment& env, FILE* fid,
   : FileSink(env, fid, bufferSize, perFrameFileNamePrefix),
     fSamplingFrequency(samplingFrequency), fConfigStr(configStr),
     fHaveWrittenFirstFrame(False), fHaveSeenEOF(False),
-    fGranulePosition(0), fGranulePositionAdjustment(0),
-    fPageSequenceNumber(0), fAltFrameSize(0), fAltNumTruncatedBytes(0) {
+    fGranulePosition(0), fGranulePositionAdjustment(0), fPageSequenceNumber(0),
+    fIsTheora(False), fGranuleIncrementPerFrame(1),
+    fAltFrameSize(0), fAltNumTruncatedBytes(0) {
   fAltBuffer = new unsigned char[bufferSize];
 
   // Initialize our 'Ogg page header' array with constant values:
@@ -96,16 +97,27 @@ void OggFileSink::addData(unsigned char const* data, unsigned dataSize,
 			  struct timeval presentationTime) {
   if (dataSize == 0) return;
 
-  double ptDiff
-    = (presentationTime.tv_sec - fFirstPresentationTime.tv_sec)
-    + (presentationTime.tv_usec - fFirstPresentationTime.tv_usec)/1000000.0;
-  int64_t newGranulePosition
-    = (int64_t)(fSamplingFrequency*ptDiff) + fGranulePositionAdjustment;
-  if (newGranulePosition < fGranulePosition) {
-    // Update "fGranulePositionAdjustment" so that "fGranulePosition" remains monotonic
-    fGranulePositionAdjustment += fGranulePosition - newGranulePosition;
+  // Set "fGranulePosition" for this frame:
+  if (fIsTheora) {
+    // Special case for Theora: "fGranulePosition" is supposed to be made up of a pair:
+    //   (frame count to last key frame) | (frame count since last key frame)
+    // However, because there appears to be no easy way to figure out which frames are key frames,
+    // we just assume that all frames are key frames.
+    if (!(data[0] >= 0x80 && data[0] <= 0x82)) { // for header pages, "fGranulePosition" remains 0
+      fGranulePosition += fGranuleIncrementPerFrame;
+    }
   } else {
-    fGranulePosition = newGranulePosition;
+    double ptDiff
+      = (presentationTime.tv_sec - fFirstPresentationTime.tv_sec)
+      + (presentationTime.tv_usec - fFirstPresentationTime.tv_usec)/1000000.0;
+    int64_t newGranulePosition
+      = (int64_t)(fSamplingFrequency*ptDiff) + fGranulePositionAdjustment;
+    if (newGranulePosition < fGranulePosition) {
+      // Update "fGranulePositionAdjustment" so that "fGranulePosition" remains monotonic
+      fGranulePositionAdjustment += fGranulePosition - newGranulePosition;
+    } else {
+      fGranulePosition = newGranulePosition;
+    }
   }
 
   // Write the frame to the file as a single Ogg 'page' (or perhaps as multiple pages
@@ -121,7 +133,10 @@ void OggFileSink::addData(unsigned char const* data, unsigned dataSize,
   for (unsigned i = 0; i < numPagesToWrite; ++i) {
     // First, fill in the changeable parts of our 'page header' array;
     u_int8_t header_type_flag = 0x0;
-    if (!fHaveWrittenFirstFrame && i == 0) header_type_flag |= 0x02; // 'bos'
+    if (!fHaveWrittenFirstFrame && i == 0) {
+      header_type_flag |= 0x02; // 'bos'
+      fHaveWrittenFirstFrame = True; // for the future
+    }
     if (i > 0) header_type_flag |= 0x01; // 'continuation'
     if (fHaveSeenEOF && i == numPagesToWrite-1) header_type_flag |= 0x04; // 'eos'
     fPageHeaderBytes[5] = header_type_flag;
@@ -195,35 +210,42 @@ void OggFileSink::afterGettingFrame(unsigned frameSize, unsigned numTruncatedByt
 
     // If we have a 'config string' representing 'packed configuration headers'
     // ("identification", "comment", "setup"), unpack them and prepend them to the file:
-    u_int8_t* identificationHdr; unsigned identificationHdrSize;
-    u_int8_t* commentHdr; unsigned commentHdrSize;
-    u_int8_t* setupHdr; unsigned setupHdrSize;
-    u_int32_t identField;
-    parseVorbisOrTheoraConfigStr(fConfigStr,
-				 identificationHdr, identificationHdrSize,
-				 commentHdr, commentHdrSize,
-				 setupHdr, setupHdrSize,
-				 identField);
-    OggFileSink::addData(identificationHdr, identificationHdrSize, presentationTime);
-    fHaveWrittenFirstFrame = True; // for the future
-
-    OggFileSink::addData(commentHdr, commentHdrSize, presentationTime);
-
-    // Hack: Handle the "setup" header as if had arrived in the previous delivery, so it'll get
-    // written properly below:
-    if (setupHdrSize > fBufferSize) {
-      fAltFrameSize = fBufferSize;
-      fAltNumTruncatedBytes = setupHdrSize - fBufferSize;
-    } else {
-      fAltFrameSize = setupHdrSize;
-      fAltNumTruncatedBytes = 0;
+    if (fConfigStr != NULL && fConfigStr[0] != '\0') {
+      u_int8_t* identificationHdr; unsigned identificationHdrSize;
+      u_int8_t* commentHdr; unsigned commentHdrSize;
+      u_int8_t* setupHdr; unsigned setupHdrSize;
+      u_int32_t identField;
+      parseVorbisOrTheoraConfigStr(fConfigStr,
+				   identificationHdr, identificationHdrSize,
+				   commentHdr, commentHdrSize,
+				   setupHdr, setupHdrSize,
+				   identField);
+      if (identificationHdrSize >= 42
+	  && strncmp((const char*)&identificationHdr[1], "theora", 6) == 0) {
+	// Hack for Theora video: Parse the "identification" hdr to get the "KFGSHIFT" parameter:
+	fIsTheora = True;
+	u_int8_t const KFGSHIFT = ((identificationHdr[40]&3)<<3) | (identificationHdr[41]>>5);
+	fGranuleIncrementPerFrame = (u_int64_t)(1 << KFGSHIFT);
+      }
+      OggFileSink::addData(identificationHdr, identificationHdrSize, presentationTime);
+      OggFileSink::addData(commentHdr, commentHdrSize, presentationTime);
+      
+      // Hack: Handle the "setup" header as if had arrived in the previous delivery, so it'll get
+      // written properly below:
+      if (setupHdrSize > fBufferSize) {
+	fAltFrameSize = fBufferSize;
+	fAltNumTruncatedBytes = setupHdrSize - fBufferSize;
+      } else {
+	fAltFrameSize = setupHdrSize;
+	fAltNumTruncatedBytes = 0;
+      }
+      memmove(fAltBuffer, setupHdr, fAltFrameSize);
+      fAltPresentationTime = presentationTime;
+      
+      delete[] identificationHdr;
+      delete[] commentHdr;
+      delete[] setupHdr;
     }
-    memmove(fAltBuffer, setupHdr, fAltFrameSize);
-    fAltPresentationTime = presentationTime;
-
-    delete[] identificationHdr;
-    delete[] commentHdr;
-    delete[] setupHdr;
   }
 
   // Save this input frame for next time, and instead write the previous input frame now:

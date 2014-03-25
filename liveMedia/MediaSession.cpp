@@ -206,6 +206,7 @@ Boolean MediaSession::initializeWithSDP(char const* sdpDescription) {
       if (subsession->parseSDPLine_c(sdpLine)) continue;
       if (subsession->parseSDPLine_b(sdpLine)) continue;
       if (subsession->parseSDPAttribute_rtpmap(sdpLine)) continue;
+      if (subsession->parseSDPAttribute_rtcpmux(sdpLine)) continue;
       if (subsession->parseSDPAttribute_control(sdpLine)) continue;
       if (subsession->parseSDPAttribute_range(sdpLine)) continue;
       if (subsession->parseSDPAttribute_fmtp(sdpLine)) continue;
@@ -596,7 +597,7 @@ MediaSubsession::MediaSubsession(MediaSession& parent)
     fConnectionEndpointName(NULL),
     fClientPortNum(0), fRTPPayloadFormat(0xFF),
     fSavedSDPLines(NULL), fMediumName(NULL), fCodecName(NULL), fProtocolName(NULL),
-    fRTPTimestampFrequency(0), fControlPath(NULL),
+    fRTPTimestampFrequency(0), fMultiplexRTCPWithRTP(False), fControlPath(NULL),
     fSourceFilterAddr(parent.sourceFilterAddr()), fBandwidth(0),
     fPlayStartTime(0.0), fPlayEndTime(0.0), fAbsStartTime(NULL), fAbsEndTime(NULL),
     fVideoWidth(0), fVideoHeight(0), fVideoFPS(0), fNumChannels(1), fScale(1.0f), fNPT_PTS_Offset(0.0f),
@@ -614,7 +615,6 @@ MediaSubsession::MediaSubsession(MediaSession& parent)
   setAttribute("profile-id", "1"); // used with "video/H265"
   setAttribute("level-id", "93"); // used with "video/H265"
   setAttribute("interop-constraints", "B00000000000"); // used with "video/H265"
-  setAttribute("tx-mode", "SST"); // used with "video/H265"
 }
 
 MediaSubsession::~MediaSubsession() {
@@ -690,7 +690,7 @@ Boolean MediaSubsession::initiate(int useSpecialRTPoffset) {
     if (fClientPortNum != 0 && (honorSDPPortChoice || IsMulticastAddress(tempAddr.s_addr))) {
       // The sockets' port numbers were specified for us.  Use these:
       Boolean const protocolIsRTP = strcmp(fProtocolName, "RTP") == 0;
-      if (protocolIsRTP) {
+      if (protocolIsRTP && !fMultiplexRTCPWithRTP) {
 	fClientPortNum = fClientPortNum&~1;
 	    // use an even-numbered port for RTP, and the next (odd-numbered) port for RTCP
       }
@@ -705,17 +705,24 @@ Boolean MediaSubsession::initiate(int useSpecialRTPoffset) {
       }
       
       if (protocolIsRTP) {
-	// Set our RTCP port to be the RTP port +1
-	portNumBits const rtcpPortNum = fClientPortNum|1;
-	if (isSSM()) {
-	  fRTCPSocket = new Groupsock(env(), tempAddr, fSourceFilterAddr, rtcpPortNum);
+	if (fMultiplexRTCPWithRTP) {
+	  // Use the RTP 'groupsock' object for RTCP as well:
+	  fRTCPSocket = fRTPSocket;
 	} else {
-	  fRTCPSocket = new Groupsock(env(), tempAddr, rtcpPortNum, 255);
+	  // Set our RTCP port to be the RTP port + 1:
+	  portNumBits const rtcpPortNum = fClientPortNum|1;
+	  if (isSSM()) {
+	    fRTCPSocket = new Groupsock(env(), tempAddr, fSourceFilterAddr, rtcpPortNum);
+	  } else {
+	    fRTCPSocket = new Groupsock(env(), tempAddr, rtcpPortNum, 255);
+	  }
 	}
       }
     } else {
       // Port numbers were not specified in advance, so we use ephemeral port numbers.
       // Create sockets until we get a port-number pair (even: RTP; even+1: RTCP).
+      // (However, if we're multiplexing RTCP with RTP, then we create only one socket,
+      // and the port number  can be even or odd.)
       // We need to make sure that we don't keep trying to use the same bad port numbers over
       // and over again, so we store bad sockets in a table, and delete them all when we're done.
       HashTable* socketHashTable = HashTable::create(ONE_WORD_HASH_KEYS);
@@ -736,12 +743,21 @@ Boolean MediaSubsession::initiate(int useSpecialRTPoffset) {
 	  break;
 	}
 
-	// Get the client port number, and check whether it's even (for RTP):
+	// Get the client port number:
 	Port clientPort(0);
 	if (!getSourcePort(env(), fRTPSocket->socketNum(), clientPort)) {
 	  break;
 	}
 	fClientPortNum = ntohs(clientPort.num()); 
+
+	if (fMultiplexRTCPWithRTP) {
+	  // Use this RTP 'groupsock' object for RTCP as well:
+	  fRTCPSocket = fRTPSocket;
+	  success = True;
+	  break;
+	}	  
+
+	// To be usable for RTP, the client port number must be even:
 	if ((fClientPortNum&1) != 0) { // it's odd
 	  // Record this socket in our table, and keep trying:
 	  unsigned key = (unsigned)fClientPortNum;
@@ -835,8 +851,9 @@ void MediaSubsession::deInitiate() {
   Medium::close(fReadSource); // this is assumed to also close fRTPSource
   fReadSource = NULL; fRTPSource = NULL;
 
-  delete fRTPSocket; fRTPSocket = NULL;
-  delete fRTCPSocket; fRTCPSocket = NULL;
+  delete fRTPSocket;
+  if (fRTCPSocket != fRTPSocket) delete fRTCPSocket;
+  fRTPSocket = NULL; fRTCPSocket = NULL;
 }
 
 Boolean MediaSubsession::setClientPortNum(unsigned short portNum) {
@@ -904,7 +921,7 @@ void MediaSubsession::setDestinations(netAddressBits defaultDestAddress) {
     Port destPort(serverPortNum);
     fRTPSocket->changeDestinationParameters(destAddr, destPort, destTTL);
   }
-  if (fRTCPSocket != NULL && !isSSM()) {
+  if (fRTCPSocket != NULL && !isSSM() && !fMultiplexRTCPWithRTP) {
     // Note: For SSM sessions, the dest address for RTCP was already set.
     Port destPort(serverPortNum+1);
     fRTCPSocket->changeDestinationParameters(destAddr, destPort, destTTL);
@@ -1021,6 +1038,15 @@ Boolean MediaSubsession::parseSDPAttribute_rtpmap(char const* sdpLine) {
   delete[] codecName;
 
   return parseSuccess;
+}
+
+Boolean MediaSubsession::parseSDPAttribute_rtcpmux(char const* sdpLine) {
+  if (strncmp(sdpLine, "a=rtcp-mux", 10) == 0) {
+    fMultiplexRTCPWithRTP = True;
+    return True;
+  }
+
+  return False;
 }
 
 Boolean MediaSubsession::parseSDPAttribute_control(char const* sdpLine) {
@@ -1230,6 +1256,9 @@ Boolean MediaSubsession::createSourceObjects(int useSpecialRTPoffset) {
 	  = VorbisAudioRTPSource::createNew(env(), fRTPSocket,
 					    fRTPPayloadFormat,
 					    fRTPTimestampFrequency);
+      } else if (strcmp(fCodecName, "THEORA") == 0) { // Theora video
+	fReadSource = fRTPSource
+	  = TheoraVideoRTPSource::createNew(env(), fRTPSocket, fRTPPayloadFormat);
       } else if (strcmp(fCodecName, "VP8") == 0) { // VP8 video
 	fReadSource = fRTPSource
 	  = VP8VideoRTPSource::createNew(env(), fRTPSocket,
@@ -1282,9 +1311,7 @@ Boolean MediaSubsession::createSourceObjects(int useSpecialRTPoffset) {
 					  fRTPPayloadFormat,
 					  fRTPTimestampFrequency);
       } else if (strcmp(fCodecName, "H265") == 0) {
-	Boolean expectDONFields
-	  = strcmp(attrVal_str("tx-mode"), "sst") != 0
-	  || attrVal_unsigned("sprop-depack-buf-nalus") > 0;
+	Boolean expectDONFields = attrVal_unsigned("sprop-depack-buf-nalus") > 0;
 	fReadSource = fRTPSource
 	  = H265VideoRTPSource::createNew(env(), fRTPSocket,
 					  fRTPPayloadFormat,
