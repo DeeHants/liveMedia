@@ -181,7 +181,7 @@ Boolean makeSocketNonBlocking(int sock) {
 #endif
 }
 
-Boolean makeSocketBlocking(int sock) {
+Boolean makeSocketBlocking(int sock, unsigned writeTimeoutInMilliseconds) {
 #if defined(__WIN32__) || defined(_WIN32)
   unsigned long arg = 0;
   return ioctlsocket(sock, FIONBIO, &arg) == 0;
@@ -192,6 +192,12 @@ Boolean makeSocketBlocking(int sock) {
   int curFlags = fcntl(sock, F_GETFL, 0);
   return fcntl(sock, F_SETFL, curFlags&(~O_NONBLOCK)) >= 0;
 #endif
+
+  if (writeTimeoutInMilliseconds > 0) {
+#ifdef SO_SNDTIMEO
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (char *)&writeTimeoutInMilliseconds, sizeof (unsigned));
+#endif
+  }
 }
 
 int setupStreamSocket(UsageEnvironment& env,
