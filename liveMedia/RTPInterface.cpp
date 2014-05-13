@@ -174,8 +174,8 @@ void RTPInterface::removeStreamSocket(int sockNum,
   for (tcpStreamRecord** streamsPtr = &fTCPStreams; *streamsPtr != NULL;
        streamsPtr = &((*streamsPtr)->fNext)) {
     if ((*streamsPtr)->fStreamSocketNum == sockNum
-	&& (*streamsPtr)->fStreamChannelId == streamChannelId) {
-      deregisterSocket(envir(), sockNum, streamChannelId);
+	&& (streamChannelId == 0xFF || streamChannelId == (*streamsPtr)->fStreamChannelId)) {
+      deregisterSocket(envir(), sockNum, (*streamsPtr)->fStreamChannelId);
 
       // Then remove the record pointed to by *streamsPtr :
       tcpStreamRecord* next = (*streamsPtr)->fNext;
@@ -345,13 +345,13 @@ Boolean RTPInterface::sendDataOverTCP(int socketNum, u_int8_t const* data, unsig
       sendResult = send(socketNum, (char const*)(&data[numBytesSentSoFar]), numBytesRemainingToSend, 0/*flags*/);
       if ((unsigned)sendResult != numBytesRemainingToSend) {
 	// The blocking "send()" failed, or timed out.  In either case, we assume that the
-	// TCP connection has failed (or is 'hanging' indefinitely), and we close the socket.
-	// (If we didn't close the socket here, the RTP or RTCP packet write would be in an
+	// TCP connection has failed (or is 'hanging' indefinitely), and we stop using it.
+	// (If we kept using the socket here, the RTP or RTCP packet write would be in an
 	//  incomplete, inconsistent state.)
 #ifdef DEBUG_SEND
 	fprintf(stderr, "sendDataOverTCP: blocking send() failed (delivering %d bytes out of %d); closing socket %d\n", sendResult, numBytesRemainingToSend, socketNum); fflush(stderr);
 #endif
-	closeSocket(socketNum);
+	removeStreamSocket(socketNum, 0xFF);
 	return False;
       }
       makeSocketNonBlocking(socketNum);
