@@ -235,7 +235,9 @@ void MPEG2TransportStreamMultiplexor
 }
 
 #define PAT_PID 0
+#ifndef OUR_PROGRAM_NUMBER
 #define OUR_PROGRAM_NUMBER 1
+#endif
 #define OUR_PROGRAM_MAP_PID 0x30
 
 void MPEG2TransportStreamMultiplexor::deliverPATPacket() {
