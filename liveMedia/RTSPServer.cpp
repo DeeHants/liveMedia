@@ -913,21 +913,22 @@ void RTSPServer::RTSPClientConnection::handleRequestBytes(int newBytesRead) {
 	delete[] decodedBytes;
       }
       fBase64RemainderCount = newBase64RemainderCount;
-      if (fBase64RemainderCount > 0) break; // because we know that we have more input bytes still to receive
     }
     
-    // Look for the end of the message: <CR><LF><CR><LF>
     unsigned char *tmpPtr = fLastCRLF + 2;
-    if (tmpPtr < fRequestBuffer) tmpPtr = fRequestBuffer;
-    while (tmpPtr < &ptr[newBytesRead-1]) {
-      if (*tmpPtr == '\r' && *(tmpPtr+1) == '\n') {
-	if (tmpPtr - fLastCRLF == 2) { // This is it:
-	  endOfMsg = True;
-	  break;
+    if (fBase64RemainderCount == 0) { // no more Base-64 bytes remain to be read/decoded
+      // Look for the end of the message: <CR><LF><CR><LF>
+      if (tmpPtr < fRequestBuffer) tmpPtr = fRequestBuffer;
+      while (tmpPtr < &ptr[newBytesRead-1]) {
+	if (*tmpPtr == '\r' && *(tmpPtr+1) == '\n') {
+	  if (tmpPtr - fLastCRLF == 2) { // This is it:
+	    endOfMsg = True;
+	    break;
+	  }
+	  fLastCRLF = tmpPtr;
 	}
-	fLastCRLF = tmpPtr;
+	++tmpPtr;
       }
-      ++tmpPtr;
     }
     
     fRequestBufferBytesLeft -= newBytesRead;
