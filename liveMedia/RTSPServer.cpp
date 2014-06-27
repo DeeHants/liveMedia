@@ -909,7 +909,8 @@ void RTSPServer::RTSPClientConnection::handleRequestBytes(int newBytesRead) {
 	// Then copy any remaining (undecoded) bytes to the end:
 	for (unsigned j = 0; j < newBase64RemainderCount; ++j) *to++ = (ptr-fBase64RemainderCount+numBytesToDecode)[j];
 	
-	newBytesRead = decodedSize + newBase64RemainderCount; // adjust to allow for the size of the new decoded data (+ remainder)
+	newBytesRead = decodedSize - fBase64RemainderCount + newBase64RemainderCount;
+	  // adjust to allow for the size of the new decoded data (+ remainder)
 	delete[] decodedBytes;
       }
       fBase64RemainderCount = newBase64RemainderCount;
