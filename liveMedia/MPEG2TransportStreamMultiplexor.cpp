@@ -91,7 +91,7 @@ void MPEG2TransportStreamMultiplexor::doGetNextFrame() {
 
 void MPEG2TransportStreamMultiplexor
 ::handleNewBuffer(unsigned char* buffer, unsigned bufferSize,
-		  int mpegVersion, MPEG1or2Demux::SCR scr) {
+		  int mpegVersion, MPEG1or2Demux::SCR scr, int16_t PID) {
   if (bufferSize < 4) return;
   fInputBuffer = buffer;
   fInputBufferSize = bufferSize;
@@ -106,7 +106,10 @@ void MPEG2TransportStreamMultiplexor
     setProgramStreamMap(fInputBufferSize);
     fInputBufferSize = 0; // then, ignore the buffer
   } else {
-    fCurrentPID = stream_id;
+    if (PID == -1)
+      fCurrentPID = stream_id;
+    else
+      fCurrentPID = (u_int8_t)PID;
 
     // Set the stream's type:
     u_int8_t& streamType = fPIDState[fCurrentPID].streamType; // alias
