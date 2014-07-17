@@ -1564,6 +1564,14 @@ void RTSPServer::RTSPClientSession
     }
     // ASSERT: subsession != NULL
     
+    void*& token = fStreamStates[streamNum].streamToken; // alias
+    if (token != NULL) {
+      // We already handled a "SETUP" for this track (to the same client),
+      // so stop any existing streaming of it, before we set it up again:
+      subsession->pauseStream(fOurSessionId, token);
+      subsession->deleteStream(fOurSessionId, token);
+    }
+
     // Look for a "Transport:" header in the request string, to extract client parameters:
     StreamingMode streamingMode;
     char* streamingModeString = NULL; // set when RAW_UDP streaming is specified
