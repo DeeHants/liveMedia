@@ -215,10 +215,11 @@ Boolean RTPInterface::sendPacket(unsigned char* packet, unsigned packetSize) {
   if (!fGS->output(envir(), fGS->ttl(), packet, packetSize)) success = False;
 
   // Also, send over each of our TCP sockets:
-  for (tcpStreamRecord* streams = fTCPStreams; streams != NULL;
-       streams = streams->fNext) {
+  tcpStreamRecord* nextStream;
+  for (tcpStreamRecord* stream = fTCPStreams; stream != NULL; stream = nextStream) {
+    nextStream = stream->fNext; // Set this now, in case the following deletes "stream":
     if (!sendRTPorRTCPPacketOverTCP(packet, packetSize,
-				    streams->fStreamSocketNum, streams->fStreamChannelId)) {
+				    stream->fStreamSocketNum, stream->fStreamChannelId)) {
       success = False;
     }
   }
