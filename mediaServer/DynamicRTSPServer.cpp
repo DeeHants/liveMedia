@@ -44,8 +44,8 @@ DynamicRTSPServer::~DynamicRTSPServer() {
 static ServerMediaSession* createNewSMS(UsageEnvironment& env,
 					char const* fileName, FILE* fid); // forward
 
-ServerMediaSession*
-DynamicRTSPServer::lookupServerMediaSession(char const* streamName) {
+ServerMediaSession* DynamicRTSPServer
+::lookupServerMediaSession(char const* streamName, Boolean isFirstLookupInSession) {
   // First, check whether the specified "streamName" exists as a local file:
   FILE* fid = fopen(streamName, "rb");
   Boolean fileExists = fid != NULL;
@@ -59,20 +59,24 @@ DynamicRTSPServer::lookupServerMediaSession(char const* streamName) {
     if (smsExists) {
       // "sms" was created for a file that no longer exists. Remove it:
       removeServerMediaSession(sms);
+      sms = NULL;
     }
 
     return NULL;
   } else {
-    if (smsExists) { 
+    if (smsExists && isFirstLookupInSession) { 
       // Remove the existing "ServerMediaSession" and create a new one, in case the underlying
       // file has changed in some way:
       removeServerMediaSession(sms); 
+      sms = NULL;
     } 
 
-    sms = createNewSMS(envir(), streamName, fid); 
-    addServerMediaSession(sms); 
-    fclose(fid);
+    if (sms == NULL) {
+      sms = createNewSMS(envir(), streamName, fid); 
+      addServerMediaSession(sms);
+    }
 
+    fclose(fid);
     return sms;
   }
 }

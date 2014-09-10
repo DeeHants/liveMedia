@@ -38,7 +38,8 @@ protected:
   virtual ~DynamicRTSPServer();
 
 protected: // redefined virtual functions
-  virtual ServerMediaSession* lookupServerMediaSession(char const* streamName);
+  virtual ServerMediaSession*
+  lookupServerMediaSession(char const* streamName, Boolean isFirstLookupInSession);
 };
 
 #endif

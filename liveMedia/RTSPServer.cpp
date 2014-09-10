@@ -64,7 +64,9 @@ void RTSPServer::addServerMediaSession(ServerMediaSession* serverMediaSession) {
   fServerMediaSessions->Add(sessionName, (void*)serverMediaSession);
 }
 
-ServerMediaSession* RTSPServer::lookupServerMediaSession(char const* streamName) {
+ServerMediaSession* RTSPServer
+::lookupServerMediaSession(char const* streamName, Boolean /*isFirstLookupInSession*/) {
+  // Default implementation:
   return (ServerMediaSession*)(fServerMediaSessions->Lookup(streamName));
 }
 
@@ -1487,7 +1489,8 @@ void RTSPServer::RTSPClientSession
   
   do {
     // First, make sure the specified stream name exists:
-    ServerMediaSession* sms = fOurServer.lookupServerMediaSession(streamName);
+    ServerMediaSession* sms
+      = fOurServer.lookupServerMediaSession(streamName, fOurServerMediaSession == NULL);
     if (sms == NULL) {
       // Check for the special case (noted above), before we give up:
       if (urlPreSuffix[0] == '\0') {
@@ -1500,7 +1503,7 @@ void RTSPServer::RTSPClientSession
       trackId = NULL;
       
       // Check again:
-      sms = fOurServer.lookupServerMediaSession(streamName);
+      sms = fOurServer.lookupServerMediaSession(streamName, fOurServerMediaSession == NULL);
     }
     if (sms == NULL) {
       if (fOurServerMediaSession == NULL) {
