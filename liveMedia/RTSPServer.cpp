@@ -976,7 +976,14 @@ void RTSPServer::RTSPClientConnection::handleRequestBytes(int newBytesRead) {
       // Handle the specified command (beginning with commands that are session-independent):
       fCurrentCSeq = cseq;
       if (strcmp(cmdName, "OPTIONS") == 0) {
-	handleCmd_OPTIONS();
+	// If the "OPTIONS" command included a "Session:" id for a session that doesn't exist,
+	// then treat this as an error:
+	if (requestIncludedSessionId && clientSession == NULL) {
+	  handleCmd_sessionNotFound();
+	} else {
+	  // Normal case:
+	  handleCmd_OPTIONS();
+	}
       } else if (urlPreSuffix[0] == '\0' && urlSuffix[0] == '*' && urlSuffix[1] == '\0') {
 	// The special "*" URL means: an operation on the entire server.  This works only for GET_PARAMETER and SET_PARAMETER:
 	if (strcmp(cmdName, "GET_PARAMETER") == 0) {
