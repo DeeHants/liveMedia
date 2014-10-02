@@ -569,12 +569,27 @@ void RTCPInstance
 	  break;
 	}
 	// Later handle SDES, APP, and compound RTCP packets #####
-        default:
+        case RTCP_PT_SDES: {
 #ifdef DEBUG
-	  fprintf(stderr, "UNSUPPORTED TYPE(0x%x)\n", pt);
+	  fprintf(stderr, "SDES(unhandled)\n");
 #endif
 	  subPacketOK = True;
 	  break;
+	}
+        case RTCP_PT_APP: {
+#ifdef DEBUG
+	  fprintf(stderr, "APP(unhandled)\n");
+#endif
+	  subPacketOK = True;
+	  break;
+	}
+        default: {
+#ifdef DEBUG
+	  fprintf(stderr, "UNKNOWN TYPE(0x%x)\n", pt);
+#endif
+	  subPacketOK = True;
+	  break;
+	}
       }
       if (!subPacketOK) break;
 
