@@ -116,9 +116,9 @@ public:
 
   void multicastSendOnly(); // send, but don't receive any multicast packets
 
-  Boolean output(UsageEnvironment& env, u_int8_t ttl,
-		 unsigned char* buffer, unsigned bufferSize,
-		 DirectedNetInterface* interfaceNotToFwdBackTo = NULL);
+  virtual Boolean output(UsageEnvironment& env, u_int8_t ttl,
+			 unsigned char* buffer, unsigned bufferSize,
+			 DirectedNetInterface* interfaceNotToFwdBackTo = NULL);
 
   DirectedNetInterfaceSet& members() { return fMembers; }
 
