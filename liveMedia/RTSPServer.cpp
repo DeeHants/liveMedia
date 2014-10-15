@@ -495,6 +495,7 @@ void RTSPServer::RTSPClientConnection
 
 void RTSPServer::RTSPClientConnection
 ::handleCmd_DESCRIBE(char const* urlPreSuffix, char const* urlSuffix, char const* fullRequestStr) {
+  ServerMediaSession* session = NULL;
   char* sdpDescription = NULL;
   char* rtspURL = NULL;
   do {
@@ -516,12 +517,16 @@ void RTSPServer::RTSPClientConnection
     // for "application/sdp", because that's what we're sending back #####
     
     // Begin by looking up the "ServerMediaSession" object for the specified "urlTotalSuffix":
-    ServerMediaSession* session = fOurServer.lookupServerMediaSession(urlTotalSuffix);
+    session = fOurServer.lookupServerMediaSession(urlTotalSuffix);
     if (session == NULL) {
       handleCmd_notFound();
       break;
     }
     
+    // Increment the "ServerMediaSession" object's reference count, in case someone removes it
+    // while we're using it:
+    session->incrementReferenceCount();
+
     // Then, assemble a SDP description for this session:
     sdpDescription = session->generateSDPDescription();
     if (sdpDescription == NULL) {
@@ -550,6 +555,14 @@ void RTSPServer::RTSPClientConnection
 	     sdpDescription);
   } while (0);
   
+  if (session != NULL) {
+    // Decrement it's reference count, now that we're done using it:
+    session->decrementReferenceCount();
+    if (session->referenceCount() == 0 && session->deleteWhenUnreferenced()) {
+      fOurServer.removeServerMediaSession(session);
+    }
+  }
+
   delete[] sdpDescription;
   delete[] rtspURL;
 }
