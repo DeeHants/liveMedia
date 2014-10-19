@@ -58,7 +58,7 @@ protected:
 };
 
 #ifndef RTSP_BUFFER_SIZE
-#define RTSP_BUFFER_SIZE 10000 // for incoming requests, and outgoing responses
+#define RTSP_BUFFER_SIZE 20000 // for incoming requests, and outgoing responses
 #endif
 
 class RTSPServer: public Medium {
