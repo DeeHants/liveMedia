@@ -113,7 +113,7 @@ static double dTimeNow() {
     return (double) (timeNow.tv_sec + timeNow.tv_usec/1000000.0);
 }
 
-static unsigned const maxRTCPPacketSize = 1450;
+static unsigned const maxRTCPPacketSize = 1456;
 	// bytes (1500, minus some allowance for IP, UDP, UMTP headers)
 static unsigned const preferredRTCPPacketSize = 1000; // bytes
 
