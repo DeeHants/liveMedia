@@ -15,72 +15,94 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 **********/
 // "liveMedia"
 // Copyright (c) 1996-2014 Live Networks, Inc.  All rights reserved.
-// VP8 Video RTP Sources
+// VP9 Video RTP Sources
 // Implementation
 
-#include "VP8VideoRTPSource.hh"
+#include "VP9VideoRTPSource.hh"
 
-VP8VideoRTPSource*
-VP8VideoRTPSource::createNew(UsageEnvironment& env, Groupsock* RTPgs,
+VP9VideoRTPSource*
+VP9VideoRTPSource::createNew(UsageEnvironment& env, Groupsock* RTPgs,
 			      unsigned char rtpPayloadFormat,
 			      unsigned rtpTimestampFrequency) {
-  return new VP8VideoRTPSource(env, RTPgs, rtpPayloadFormat,
+  return new VP9VideoRTPSource(env, RTPgs, rtpPayloadFormat,
 			       rtpTimestampFrequency);
 }
 
-VP8VideoRTPSource
-::VP8VideoRTPSource(UsageEnvironment& env, Groupsock* RTPgs,
+VP9VideoRTPSource
+::VP9VideoRTPSource(UsageEnvironment& env, Groupsock* RTPgs,
 		     unsigned char rtpPayloadFormat,
 		     unsigned rtpTimestampFrequency)
   : MultiFramedRTPSource(env, RTPgs, rtpPayloadFormat, rtpTimestampFrequency) {
 }
 
-VP8VideoRTPSource::~VP8VideoRTPSource() {
+VP9VideoRTPSource::~VP9VideoRTPSource() {
 }
 
 #define incrHeader do { ++resultSpecialHeaderSize; ++headerStart; if (--packetSize == 0) return False; } while (0)
 
-Boolean VP8VideoRTPSource
+Boolean VP9VideoRTPSource
 ::processSpecialHeader(BufferedPacket* packet,
                        unsigned& resultSpecialHeaderSize) {
   unsigned char* headerStart = packet->data();
   unsigned packetSize = packet->dataSize();
 
-  // The special header is from 1 to 6 bytes long.
+  // Figure out the size of the special header.
   if (packetSize == 0) return False; // error
   resultSpecialHeaderSize = 1; // unless we learn otherwise
 
   u_int8_t const byte1 = *headerStart;
-  Boolean const X = (byte1&0x80) != 0;
-  Boolean const S = (byte1&0x10) != 0;
-  u_int8_t const PartID = byte1&0x0F;
+  Boolean const I = (byte1&0x80) != 0;
+  Boolean const L = (byte1&0x40) != 0;
+  Boolean const F = (byte1&0x20) != 0;
+  Boolean const B = (byte1&0x10) != 0;
+  Boolean const E = (byte1&0x08) != 0;
+  Boolean const V = (byte1&0x04) != 0;
+  Boolean const U = (byte1&0x02) != 0;
 
-  fCurrentPacketBeginsFrame = S && PartID == 0;
-  fCurrentPacketCompletesFrame = packet->rtpMarkerBit(); // RTP header's "M" bit
+  fCurrentPacketBeginsFrame = B;
+  fCurrentPacketCompletesFrame = E;
+      // use this instead of the RTP header's 'M' bit (which might not be accurate)
 
-  if (X) {
+  if (I) { // PictureID present
     incrHeader;
+    Boolean const M = ((*headerStart)&0x80) != 0;
+    if (M) incrHeader;
+  }
 
-    u_int8_t const byte2 = *headerStart;
-    Boolean const I = (byte2&0x80) != 0;
-    Boolean const L = (byte2&0x40) != 0;
-    Boolean const T = (byte2&0x20) != 0;
-    Boolean const K = (byte2&0x10) != 0;
-
-    if (I) {
+  if (L) { // Layer indices present
+    incrHeader;
+    if (F) { // Reference indices present
       incrHeader;
-      if ((*headerStart)&0x80) { // extension flag in the PictureID is set
+      unsigned R = (*headerStart)&0x03;
+      while (R-- > 0) {
 	incrHeader;
+	Boolean const X = ((*headerStart)&0x10) != 0;
+	if (X) incrHeader;
       }
     }
+  }
 
-    if (L) incrHeader;
-    if (T||K) incrHeader;
+  if (V) { // Scalability Structure (SS) present
+    incrHeader;
+    unsigned patternLength = *headerStart;
+    while (patternLength-- > 0) {
+      incrHeader;
+      unsigned R = (*headerStart)&0x03;
+      while (R-- > 0) {
+	incrHeader;
+	Boolean const X = ((*headerStart)&0x10) != 0;
+	if (X) incrHeader;
+      }
+    }
+  }
+
+  if (U) { // Scalability Structure Update (SU) present
+    return False; // This structure isn't yet defined in the VP9 payload format I-D
   }
   
   return True;
 }
 
-char const* VP8VideoRTPSource::MIMEtype() const {
-  return "video/VP8";
+char const* VP9VideoRTPSource::MIMEtype() const {
+  return "video/VP9";
 }

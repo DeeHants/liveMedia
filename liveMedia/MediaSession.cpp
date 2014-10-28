@@ -1273,6 +1273,11 @@ Boolean MediaSubsession::createSourceObjects(int useSpecialRTPoffset) {
 	  = VP8VideoRTPSource::createNew(env(), fRTPSocket,
 					 fRTPPayloadFormat,
 					 fRTPTimestampFrequency);
+      } else if (strcmp(fCodecName, "VP9") == 0) { // VP9 video
+	fReadSource = fRTPSource
+	  = VP9VideoRTPSource::createNew(env(), fRTPSocket,
+					 fRTPPayloadFormat,
+					 fRTPTimestampFrequency);
       } else if (strcmp(fCodecName, "AC3") == 0 || strcmp(fCodecName, "EAC3") == 0) { // AC3 audio
 	fReadSource = fRTPSource
 	  = AC3AudioRTPSource::createNew(env(), fRTPSocket,

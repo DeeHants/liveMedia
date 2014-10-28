@@ -603,6 +603,8 @@ RTPSink* ProxyServerMediaSubsession
 					    fClientMediaSubsession.fmtp_config()); 
   } else if (strcmp(codecName, "VP8") == 0) {
     newSink = VP8VideoRTPSink::createNew(envir(), rtpGroupsock, rtpPayloadTypeIfDynamic);
+  } else if (strcmp(codecName, "VP9") == 0) {
+    newSink = VP9VideoRTPSink::createNew(envir(), rtpGroupsock, rtpPayloadTypeIfDynamic);
   } else if (strcmp(codecName, "AMR") == 0 || strcmp(codecName, "AMR-WB") == 0) {
     // Proxying of these codecs is currently *not* supported, because the data received by the "RTPSource" object is not in a
     // form that can be fed directly into a corresponding "RTPSink" object.

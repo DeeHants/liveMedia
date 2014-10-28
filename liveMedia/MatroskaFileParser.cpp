@@ -452,6 +452,8 @@ Boolean MatroskaFileParser::parseTrack() {
 	      track->mimeType = "video/H265";
 	    } else if (strncmp(codecID, "V_VP8", 5) == 0) {
 	      track->mimeType = "video/VP8";
+	    } else if (strncmp(codecID, "V_VP9", 5) == 0) {
+	      track->mimeType = "video/VP9";
 	    } else if (strncmp(codecID, "V_THEORA", 8) == 0) {
 	      track->mimeType = "video/THEORA";
 	    } else if (strncmp(codecID, "S_TEXT", 6) == 0) {
