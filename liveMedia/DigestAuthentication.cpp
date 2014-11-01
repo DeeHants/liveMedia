@@ -48,6 +48,17 @@ Authenticator& Authenticator::operator=(const Authenticator& rightSide) {
   return *this;
 }
 
+Boolean Authenticator::operator<(const Authenticator* rightSide) {
+  if (rightSide != NULL && rightSide != this &&
+      (rightSide->realm() != NULL || rightSide->nonce() != NULL ||
+       strcmp(rightSide->username(), username()) != 0 ||
+       strcmp(rightSide->password(), password()) != 0)) {
+    return True;
+  }
+
+  return False;
+}
+
 Authenticator::~Authenticator() {
   reset();
 }
@@ -145,6 +156,9 @@ void Authenticator::assignRealmAndNonce(char const* realm, char const* nonce) {
 }
 
 void Authenticator::assignUsernameAndPassword(char const* username, char const* password, Boolean passwordIsMD5) {
+  if (username == NULL) username = "";
+  if (password == NULL) password = "";
+
   fUsername = strDup(username);
   fPassword = strDup(password);
   fPasswordIsMD5 = passwordIsMD5;

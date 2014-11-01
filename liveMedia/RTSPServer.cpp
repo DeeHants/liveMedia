@@ -500,10 +500,6 @@ void RTSPServer::RTSPClientConnection
   char* rtspURL = NULL;
   do {
     char urlTotalSuffix[RTSP_PARAM_STRING_MAX];
-    if (strlen(urlPreSuffix) + strlen(urlSuffix) + 2 > sizeof urlTotalSuffix) {
-      handleCmd_bad();
-      break;
-    }
     urlTotalSuffix[0] = '\0';
     if (urlPreSuffix[0] != '\0') {
       strcat(urlTotalSuffix, urlPreSuffix);
@@ -1009,24 +1005,39 @@ void RTSPServer::RTSPClientConnection::handleRequestBytes(int newBytesRead) {
       } else if (strcmp(cmdName, "DESCRIBE") == 0) {
 	handleCmd_DESCRIBE(urlPreSuffix, urlSuffix, (char const*)fRequestBuffer);
       } else if (strcmp(cmdName, "SETUP") == 0) {
+	Boolean areAuthenticated = True;
+
 	if (!requestIncludedSessionId) {
 	  // No session id was present in the request.  So create a new "RTSPClientSession" object
 	  // for this request.  Choose a random (unused) 32-bit integer for the session id
 	  // (it will be encoded as a 8-digit hex number).  (We avoid choosing session id 0,
 	  // because that has a special use (by "OnDemandServerMediaSubsession").)
-	  u_int32_t sessionId;
-	  do {
-	    sessionId = (u_int32_t)our_random32();
-	    sprintf(sessionIdStr, "%08X", sessionId);
-	  } while (sessionId == 0 || fOurServer.fClientSessions->Lookup(sessionIdStr) != NULL);
-	  clientSession = fOurServer.createNewClientSession(sessionId);
-	  fOurServer.fClientSessions->Add(sessionIdStr, clientSession);
+
+	  // But first, make sure that we're authenticated to perform this command:
+	  char urlTotalSuffix[RTSP_PARAM_STRING_MAX];
+	  urlTotalSuffix[0] = '\0';
+	  if (urlPreSuffix[0] != '\0') {
+	    strcat(urlTotalSuffix, urlPreSuffix);
+	    strcat(urlTotalSuffix, "/");
+	  }
+	  strcat(urlTotalSuffix, urlSuffix);
+	  if (authenticationOK("SETUP", urlTotalSuffix, (char const*)fRequestBuffer)) {
+	    u_int32_t sessionId;
+	    do {
+	      sessionId = (u_int32_t)our_random32();
+	      sprintf(sessionIdStr, "%08X", sessionId);
+	    } while (sessionId == 0 || fOurServer.fClientSessions->Lookup(sessionIdStr) != NULL);
+	    clientSession = fOurServer.createNewClientSession(sessionId);
+	    fOurServer.fClientSessions->Add(sessionIdStr, clientSession);
+	  } else {
+	    areAuthenticated = False;
+	  }
 	}
 	if (clientSession != NULL) {
 	  clientSession->handleCmd_SETUP(this, urlPreSuffix, urlSuffix, (char const*)fRequestBuffer);
 	  playAfterSetup = clientSession->fStreamAfterSETUP;
-	} else {
-	    handleCmd_sessionNotFound();
+	} else if (areAuthenticated) {
+	  handleCmd_sessionNotFound();
 	}
       } else if (strcmp(cmdName, "TEARDOWN") == 0
 		 || strcmp(cmdName, "PLAY") == 0

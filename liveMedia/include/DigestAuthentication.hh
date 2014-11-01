@@ -37,6 +37,7 @@ public:
       // by md5(<username>:<realm>:<actual-password>)
   Authenticator(const Authenticator& orig);
   Authenticator& operator=(const Authenticator& rightSide);
+  Boolean operator<(const Authenticator* rightSide);
   virtual ~Authenticator();
 
   void reset();
