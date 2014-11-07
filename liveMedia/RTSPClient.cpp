@@ -1234,7 +1234,7 @@ Boolean RTSPClient::handleAuthenticationFailure(char const* paramsStr) {
   Boolean success = True;
   if (sscanf(paramsStr, "Digest realm=\"%[^\"]\", nonce=\"%[^\"]\"", realm, nonce) == 2) {
     fCurrentAuthenticator.setRealmAndNonce(realm, nonce);
-  } else if (sscanf(paramsStr, "Basic realm=\"%[^\"]\"", realm) == 1) {
+  } else if (sscanf(paramsStr, "Basic realm=\"%[^\"]\"", realm) == 1 && fAllowBasicAuthentication) {
     fCurrentAuthenticator.setRealmAndNonce(realm, NULL); // Basic authentication
   } else {
     success = False; // bad "WWW-Authenticate:" header
