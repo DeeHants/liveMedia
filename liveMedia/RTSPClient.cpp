@@ -325,7 +325,7 @@ RTSPClient::RTSPClient(UsageEnvironment& env, char const* rtspURL,
 		       int verbosityLevel, char const* applicationName,
 		       portNumBits tunnelOverHTTPPortNum, int socketNumToServer)
   : Medium(env),
-    fVerbosityLevel(verbosityLevel), fCSeq(1), fServerAddress(0),
+    fVerbosityLevel(verbosityLevel), fCSeq(1), fAllowBasicAuthentication(True), fServerAddress(0),
     fTunnelOverHTTPPortNum(tunnelOverHTTPPortNum), fUserAgentHeaderStr(NULL), fUserAgentHeaderStrLen(0),
     fInputSocketNum(-1), fOutputSocketNum(-1), fBaseURL(NULL), fTCPStreamIdCount(0),
     fLastSessionId(NULL), fSessionTimeoutParameter(0), fSessionCookieCounter(0), fHTTPTunnelingConnectionIsPending(False) {
