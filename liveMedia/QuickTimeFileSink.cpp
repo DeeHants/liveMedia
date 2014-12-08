@@ -355,6 +355,12 @@ QuickTimeFileSink::createNew(UsageEnvironment& env,
   return newSink;
 }
 
+void QuickTimeFileSink
+::noteRecordedFrame(MediaSubsession& /*inputSubsession*/,
+		    unsigned /*packetDataSize*/, struct timeval const& /*presentationTime*/) {
+  // Default implementation: Do nothing
+}
+
 Boolean QuickTimeFileSink::startPlaying(afterPlayingFunc* afterFunc,
 					void* afterClientData) {
   // Make sure we're not already being played:
@@ -717,6 +723,8 @@ void SubsessionIOState::afterGettingFrame(unsigned packetDataSize,
   fLastPacketRTPSeqNum = rtpSeqNum;
 
   // Now, continue working with the frame that we just got
+  fOurSink.noteRecordedFrame(fOurSubsession, packetDataSize, presentationTime);
+
   if (fBuffer->bytesInUse() == 0) {
     fBuffer->setPresentationTime(presentationTime);
   }

@@ -249,7 +249,7 @@ Boolean parseRangeParam(char const* paramStr,
     size_t len = strlen(utcTimes) + 1;
     char* as = new char[len];
     char* ae = new char[len];
-    int sscanfResult = sscanf(utcTimes, "%[^-]-%s", as, ae);
+    int sscanfResult = sscanf(utcTimes, "%[^-]-%[^\r\n]", as, ae);
     if (sscanfResult == 2) {
       absStartTime = as;
       absEndTime = ae;
