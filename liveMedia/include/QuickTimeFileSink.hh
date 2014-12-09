@@ -46,10 +46,6 @@ public:
   unsigned numActiveSubsessions() const { return fNumSubsessions; }
 
 protected:
-  virtual void noteRecordedFrame(MediaSubsession& inputSubsession,
-				 unsigned packetDataSize, struct timeval const& presentationTime);
-
-private:
   QuickTimeFileSink(UsageEnvironment& env, MediaSession& inputSession,
 		    char const* outputFileName, unsigned bufferSize,
 		    unsigned short movieWidth, unsigned short movieHeight,
@@ -59,6 +55,10 @@ private:
       // called only by createNew()
   virtual ~QuickTimeFileSink();
 
+  virtual void noteRecordedFrame(MediaSubsession& inputSubsession,
+				 unsigned packetDataSize, struct timeval const& presentationTime);
+
+private:
   Boolean continuePlaying();
   static void afterGettingFrame(void* clientData, unsigned frameSize,
 				unsigned numTruncatedBytes,
