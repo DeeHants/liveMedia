@@ -215,6 +215,9 @@ void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
 void BasicTaskScheduler
   ::setBackgroundHandling(int socketNum, int conditionSet, BackgroundHandlerProc* handlerProc, void* clientData) {
   if (socketNum < 0) return;
+#ifdef FD_SETSIZE
+  if (socketNum >= (int)(FD_SETSIZE)) return;
+#endif
   FD_CLR((unsigned)socketNum, &fReadSet);
   FD_CLR((unsigned)socketNum, &fWriteSet);
   FD_CLR((unsigned)socketNum, &fExceptionSet);
@@ -236,6 +239,9 @@ void BasicTaskScheduler
 
 void BasicTaskScheduler::moveSocketHandling(int oldSocketNum, int newSocketNum) {
   if (oldSocketNum < 0 || newSocketNum < 0) return; // sanity check
+#ifdef FD_SETSIZE
+  if (oldSocketNum >= (int)(FD_SETSIZE) || newSocketNum >= (int)(FD_SETSIZE)) return; // sanity check
+#endif
   if (FD_ISSET(oldSocketNum, &fReadSet)) {FD_CLR((unsigned)oldSocketNum, &fReadSet); FD_SET((unsigned)newSocketNum, &fReadSet);}
   if (FD_ISSET(oldSocketNum, &fWriteSet)) {FD_CLR((unsigned)oldSocketNum, &fWriteSet); FD_SET((unsigned)newSocketNum, &fWriteSet);}
   if (FD_ISSET(oldSocketNum, &fExceptionSet)) {FD_CLR((unsigned)oldSocketNum, &fExceptionSet); FD_SET((unsigned)newSocketNum, &fExceptionSet);}
