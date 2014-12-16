@@ -215,7 +215,7 @@ void BasicTaskScheduler::SingleStep(unsigned maxDelayTime) {
 void BasicTaskScheduler
   ::setBackgroundHandling(int socketNum, int conditionSet, BackgroundHandlerProc* handlerProc, void* clientData) {
   if (socketNum < 0) return;
-#ifdef FD_SETSIZE
+#if !defined(__WIN32__) && !defined(_WIN32) && defined(FD_SETSIZE)
   if (socketNum >= (int)(FD_SETSIZE)) return;
 #endif
   FD_CLR((unsigned)socketNum, &fReadSet);
@@ -239,7 +239,7 @@ void BasicTaskScheduler
 
 void BasicTaskScheduler::moveSocketHandling(int oldSocketNum, int newSocketNum) {
   if (oldSocketNum < 0 || newSocketNum < 0) return; // sanity check
-#ifdef FD_SETSIZE
+#if !defined(__WIN32__) && !defined(_WIN32) && defined(FD_SETSIZE)
   if (oldSocketNum >= (int)(FD_SETSIZE) || newSocketNum >= (int)(FD_SETSIZE)) return; // sanity check
 #endif
   if (FD_ISSET(oldSocketNum, &fReadSet)) {FD_CLR((unsigned)oldSocketNum, &fReadSet); FD_SET((unsigned)newSocketNum, &fReadSet);}
