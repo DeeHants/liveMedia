@@ -64,6 +64,7 @@ public: // should be protected, but some old compilers complain otherwise
 
   private:
     u_int32_t fClientSessionId;
+    FramedSource* fStreamSource;
     ByteStreamMemoryBufferSource* fPlaylistSource;
     TCPStreamSink* fTCPSink;
   };
