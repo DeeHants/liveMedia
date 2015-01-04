@@ -115,19 +115,19 @@ extern DelayInterval const DELAY_MINUTE;
 extern DelayInterval const DELAY_HOUR;
 extern DelayInterval const DELAY_DAY;
 
-///// EventTime /////
+///// _EventTime /////
 
-class EventTime: public Timeval {
+class _EventTime: public Timeval {
 public:
-  EventTime(unsigned secondsSinceEpoch = 0,
+  _EventTime(unsigned secondsSinceEpoch = 0,
 	    unsigned usecondsSinceEpoch = 0)
     // We use the Unix standard epoch: January 1, 1970
     : Timeval(secondsSinceEpoch, usecondsSinceEpoch) {}
 };
 
-EventTime TimeNow();
+_EventTime TimeNow();
 
-extern EventTime const THE_END_OF_TIME;
+extern _EventTime const THE_END_OF_TIME;
 
 
 ///// DelayQueueEntry /////
@@ -176,7 +176,7 @@ private:
   DelayQueueEntry* findEntryByToken(intptr_t token);
   void synchronize(); // bring the 'time remaining' fields up-to-date
 
-  EventTime fLastSyncTime;
+  _EventTime fLastSyncTime;
 };
 
 #endif
