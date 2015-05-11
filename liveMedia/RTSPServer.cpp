@@ -370,13 +370,6 @@ RTSPServer::~RTSPServer() {
   
   envir().taskScheduler().turnOffBackgroundReadHandling(fHTTPServerSocket);
   ::closeSocket(fHTTPServerSocket);
-  
-  // Empty out and close "fTCPStreamingDatabase":
-  streamingOverTCPRecord* sotcp;
-  while ((sotcp = (streamingOverTCPRecord*)fTCPStreamingDatabase->getFirst()) != NULL) {
-    delete sotcp;
-  }
-  delete fTCPStreamingDatabase;
 
   // Close all client session objects:
   RTSPServer::RTSPClientSession* clientSession;
@@ -406,6 +399,13 @@ RTSPServer::~RTSPServer() {
     delete registerRequest;
   }
   delete fPendingRegisterRequests;
+  
+  // Empty out and close "fTCPStreamingDatabase":
+  streamingOverTCPRecord* sotcp;
+  while ((sotcp = (streamingOverTCPRecord*)fTCPStreamingDatabase->getFirst()) != NULL) {
+    delete sotcp;
+  }
+  delete fTCPStreamingDatabase;
 }
 
 Boolean RTSPServer::isRTSPServer() const {
